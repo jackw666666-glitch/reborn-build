@@ -19,7 +19,7 @@ id SPKJackLockedPreference(NSString *key) {
             // Stories: never tell people you watched (eye button sends it, with a confirm)
             @"stories_manual_seen_mode" : @"tap",
             @"stories_manual_seen_keep_local" : @YES,
-            @"stories_mark_seen_on_like" : @NO,
+            @"stories_mark_seen_on_like" : @YES, // liking a story shows you watched it (Jack 11/15)
             @"stories_mark_seen_on_reply" : @NO,
             @"stories_confirm_mark_seen" : @YES,
 
