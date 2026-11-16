@@ -20,7 +20,7 @@ BOOL SPKPrefIsAvailable(NSString *key) {
     static dispatch_once_t jackOnce;
     dispatch_once(&jackOnce, ^{
         jackBlocked = [NSSet setWithArray:@[
-            @"profile_analyzer_track_visits",                       // Profile Analyzer visit tracking
+            @"profile_analyzer_track_visits",                       // Profile Analyzer visit tracking (local log, not needed)
             @"profile_follow_indicator", @"profile_follow_indicator_mode", @"profile_follow_indicator_colorful", // extra friendship lookup on every profile
             @"stories_search_viewer_list",                          // pages every story viewer + bulk friendship
             @"stories_mentions_btn", @"stories_mentions_count_badge", // bulk friendship lookups on mentions

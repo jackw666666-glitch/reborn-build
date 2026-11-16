@@ -131,6 +131,7 @@ FOUNDATION_EXPORT void SPKInstallFixDuplicateNotificationsHooksIfNeeded(void);
 FOUNDATION_EXPORT void SPKInstallOpenPostNativePushHooksIfNeeded(void);
 FOUNDATION_EXPORT void SPKInstallEditsShareFallbackHooksIfNeeded(void);
 FOUNDATION_EXPORT void SPKInstallDisableAppIconGestureHooksIfEnabled(void);
+FOUNDATION_EXPORT void JackInstallRebornHooks(void);
 FOUNDATION_EXPORT void SPKInstallUnlockStoryPreviewHooksIfEnabled(void);
 FOUNDATION_EXPORT void SPKInstallUnlockMessagePreviewHooksIfEnabled(void);
 FOUNDATION_EXPORT void SPKInstallHideViewerPlusButtonHooksIfEnabled(void);
@@ -361,7 +362,8 @@ void SPKInstallGeneralUIHooksIfNeeded(void) {
     // no-op call here on every other launch.
     [SPKLanguagePackUpdater checkForUpdatesIfDue];
     // Not a hook either: offers a newer Sparkle once launch settles, refreshing the feed when due.
-    [SPKUpdateChecker scheduleLaunchCheck];
+    // JACK BUILD: no update prompt (updates come from tools/sparkle_update.sh).
+    JackInstallRebornHooks();
     SPK_INSTALL(SPKInstallAccountSwitchHooksIfNeeded);
     SPK_INSTALL(SPKInstallTweakGeneralUIHooksIfNeeded);
     // Not a hook: shows the floating debug button from Tools > Diagnostics.

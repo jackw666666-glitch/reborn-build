@@ -10,7 +10,7 @@ const NSInteger SPKProfileAnalyzerMaxConnectionCount = 13000;
 
 NSNotificationName const SPKProfileAnalyzerProgressDidChangeNotification = @"SPKProfileAnalyzerProgressDidChangeNotification";
 
-#define SPK_PA_PAGE_DELAY_S 0.5       // rate-limit cushion between pages
+#define SPK_PA_PAGE_DELAY_S (2.5 + (double)arc4random_uniform(2000) / 1000.0) // JACK BUILD: 2.5-4.5 s between pages (was 0.5)
 #define SPK_PA_MAX_PAGE_RETRIES 4     // retries for a throttled/empty page
 #define SPK_PA_RETRY_BASE_DELAY_S 2.0 // backoff base; grows linearly per retry
 // A stage is considered too incomplete to trust when it collects less than this
@@ -91,10 +91,15 @@ NSNotificationName const SPKProfileAnalyzerProgressDidChangeNotification = @"SPK
 - (void)runForSelfWithHeaderInfo:(SPKPAHeaderInfo)headerInfo
                         progress:(SPKPAProgress)progress
                       completion:(SPKPACompletion)completion {
-    // JACK BUILD: Profile Analyzer scrapes the full follower/following lists — removed (ban risk).
-    if (completion)
-        completion(nil, [self errorWithCode:SPKProfileAnalyzerErrorNetwork message:@"Profile Analyzer is disabled in this build."]);
-    return;
+    // JACK BUILD: allowed at most once a day, paged slowly (see SPK_PA_PAGE_DELAY_S), so a scan
+    // reads like someone scrolling their own lists rather than a scrape.
+    NSDate *jackLast = [[NSUserDefaults standardUserDefaults] objectForKey:@"jack_pa_last_scan"];
+    if ([jackLast isKindOfClass:[NSDate class]] && -[jackLast timeIntervalSinceNow] < 24 * 3600) {
+        if (completion)
+            completion(nil, [self errorWithCode:SPKProfileAnalyzerErrorNetwork message:@"One scan a day keeps the account safe. Try again tomorrow."]);
+        return;
+    }
+    [[NSUserDefaults standardUserDefaults] setObject:[NSDate date] forKey:@"jack_pa_last_scan"];
     if (self.isRunning) {
         if (completion)
             completion(nil, [self errorWithCode:SPKProfileAnalyzerErrorAlreadyRunning

@@ -1,0 +1,53 @@
+#import "SPKJackProfile.h"
+
+// Keep the "Instagram Reborn — Feature Tracker" doc in step with this list.
+id SPKJackLockedPreference(NSString *key) {
+    static NSDictionary<NSString *, id> *locked;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        locked = @{
+            // Threads: gone
+            @"profile_hide_threads_btn" : @YES,
+            @"feed_hide_suggested_threads" : @YES,
+
+            // Reposting: button removed, and a confirm in case one turns up elsewhere
+            @"feed_hide_repost_btn" : @YES,
+            @"reels_hide_repost_btn" : @YES,
+            @"feed_confirm_repost" : @YES,
+            @"reels_confirm_repost" : @YES,
+
+            // Stories: never tell people you watched (eye button sends it, with a confirm)
+            @"stories_manual_seen_mode" : @"tap",
+            @"stories_manual_seen_keep_local" : @YES,
+            @"stories_mark_seen_on_like" : @NO,
+            @"stories_mark_seen_on_reply" : @NO,
+            @"stories_confirm_mark_seen" : @YES,
+
+            // Long-press previews of stories and chats
+            @"stories_unlock_preview" : @YES,
+            @"stories_hide_ig_plus_button" : @YES,
+            @"msgs_unlock_preview" : @YES,
+
+            // Story playback buttons (the playback one shows on video stories)
+            @"stories_audio_toggle" : @YES,
+            @"stories_playback_controls" : @YES,
+
+            // Screenshots: no detection in disappearing messages, vanish mode, Instants
+            @"msgs_disable_screenshot_detection" : @YES,
+            @"msgs_hide_vanish_screenshot" : @YES,
+            @"instants_allow_screenshot" : @YES,
+            // Sparkle's own buttons never show up in screenshots or recordings
+            @"interface_hide_ui_on_capture" : @YES,
+
+            // Lower exposure: no desktop-browser imitation for 4K photos
+            @"downloads_fetch_4k_images" : @NO,
+
+            // Sparkle stays out of sight
+            @"tools_open_settings_on_launch" : @NO,
+            @"feed_header_button" : @NO,
+            @"feed_disable_appicon_gesture" : @YES,
+            @"profile_action_btn" : @YES, // its header hook also carries the profile heart
+        };
+    });
+    return locked[key];
+}

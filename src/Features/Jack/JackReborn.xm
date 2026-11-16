@@ -1,0 +1,470 @@
+// JACK BUILD ("Instagram Reborn"): the look-and-feel changes made for Jack.
+//
+//  - Feed header: Instagram's own wordmark stays, with "Reborn" in red, underlined, beside it.
+//  - Feed header: the notifications heart is removed; it lives on your own profile instead.
+//  - Tab bar: Instagram's own tab glyphs drawn in the Instagram gradient.
+//  - App icon badge: set from Instagram's in-app unread counts (a re-signed copy gets no
+//    Instagram pushes, so the badge is refreshed whenever the app runs or goes to the background).
+//
+// Every piece fails safe: if Instagram moves a view, that piece simply does nothing.
+
+#import "../../Utils.h"
+#import "../../AssetUtils.h"
+#import "../../InstagramHeaders.h"
+#import <UserNotifications/UserNotifications.h>
+#import <objc/runtime.h>
+#import <objc/message.h>
+
+static const void *kJackRebornLabelKey = &kJackRebornLabelKey;
+static const void *kJackGradientMarkKey = &kJackGradientMarkKey;
+static const void *kJackHeartButtonKey = &kJackHeartButtonKey;
+static const void *kJackHeartDotKey = &kJackHeartDotKey;
+
+static UIColor *JackRebornRed(void) {
+    return [UIColor colorWithRed:1.0 green:0.188 blue:0.251 alpha:1.0]; // Instagram's red, #FF3040
+}
+
+#pragma mark - Header helpers
+
+static id JackGetter(id obj, NSString *name) {
+    SEL sel = NSSelectorFromString(name);
+    if (!obj || ![obj respondsToSelector:sel])
+        return nil;
+    return ((id (*)(id, SEL))objc_msgSend)(obj, sel);
+}
+
+static CGFloat JackCombinedAlpha(UIView *view, UIView *stopAt) {
+    CGFloat alpha = 1.0;
+    for (UIView *v = view; v && v != stopAt; v = v.superview) {
+        if (v.hidden)
+            return 0.0;
+        alpha *= v.alpha;
+    }
+    return alpha;
+}
+
+// The wordmark: the widest image on the left side of the header (an image view, or a
+// button's image view). Searched a few levels deep because Instagram wraps it.
+static UIImageView *JackFindWordmark(UIView *root, UIView *header, int depth) {
+    if (!root || depth > 5)
+        return nil;
+    for (UIView *sub in root.subviews) {
+        if ([sub isKindOfClass:[UIImageView class]]) {
+            UIImageView *iv = (UIImageView *)sub;
+            CGSize s = iv.image.size;
+            CGRect f = [iv convertRect:iv.bounds toView:header];
+            if (!iv.hidden && s.height > 0 && s.width / s.height >= 2.2 && f.size.width >= 60 &&
+                CGRectGetMidX(f) < header.bounds.size.width * 0.5)
+                return iv;
+        }
+        UIImageView *found = JackFindWordmark(sub, header, depth + 1);
+        if (found)
+            return found;
+    }
+    return nil;
+}
+
+static UILabel *JackRebornLabel(UIView *header) {
+    UILabel *label = objc_getAssociatedObject(header, kJackRebornLabelKey);
+    if (label)
+        return label;
+    label = [UILabel new];
+    label.userInteractionEnabled = NO;
+    label.isAccessibilityElement = NO;
+    label.backgroundColor = UIColor.clearColor;
+    objc_setAssociatedObject(header, kJackRebornLabelKey, label, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    [header addSubview:label];
+    return label;
+}
+
+static void JackSetRebornText(UILabel *label, CGFloat height) {
+    CGFloat size = MAX(14.0, round(height * 0.95));
+    if (label.font && fabs(label.font.pointSize - size) < 0.5 && label.attributedText.length)
+        return;
+    UIFont *font = [UIFont fontWithName:@"SnellRoundhand-Black" size:size]
+                       ?: [UIFont fontWithName:@"SnellRoundhand-Bold" size:size]
+                       ?: [UIFont systemFontOfSize:size * 0.8 weight:UIFontWeightHeavy];
+    label.font = font;
+    label.attributedText = [[NSAttributedString alloc] initWithString:@"Reborn" attributes:@{
+        NSFontAttributeName : font,
+        NSForegroundColorAttributeName : JackRebornRed(),
+        NSUnderlineStyleAttributeName : @(NSUnderlineStyleThick),
+        NSUnderlineColorAttributeName : JackRebornRed(),
+    }];
+}
+
+static void JackLayoutFeedHeader(UIView *header) {
+    // Heart: removed from the feed (it is on your own profile now).
+    UIView *heart = JackGetter(header, @"activityButton");
+    if ([heart isKindOfClass:[UIView class]] && !heart.hidden)
+        heart.hidden = YES;
+
+    // "Reborn" beside Instagram's wordmark.
+    UIImageView *logo = JackFindWordmark(header, header, 0);
+    UILabel *label = objc_getAssociatedObject(header, kJackRebornLabelKey);
+    if (!logo) {
+        label.hidden = YES;
+        return;
+    }
+    label = JackRebornLabel(header);
+    CGRect logoFrame = [logo convertRect:logo.bounds toView:header];
+    // The image is aspect-fit inside its view: measure the drawn glyph, not the view.
+    CGSize img = logo.image.size;
+    CGFloat drawnW = logoFrame.size.width, drawnH = logoFrame.size.height;
+    if (img.width > 0 && img.height > 0) {
+        CGFloat scale = MIN(logoFrame.size.width / img.width, logoFrame.size.height / img.height);
+        drawnW = img.width * scale;
+        drawnH = img.height * scale;
+    }
+    CGFloat drawnMinX = CGRectGetMinX(logoFrame);
+    if (logo.contentMode == UIViewContentModeScaleAspectFit || logo.contentMode == UIViewContentModeCenter)
+        drawnMinX = CGRectGetMidX(logoFrame) - drawnW / 2.0;
+    JackSetRebornText(label, drawnH);
+    [label sizeToFit];
+    CGRect f = label.frame;
+    f.origin.x = round(drawnMinX + drawnW + 6.0);
+    f.origin.y = round(CGRectGetMidY(logoFrame) - f.size.height / 2.0 + drawnH * 0.08);
+    if (!CGRectEqualToRect(label.frame, f))
+        label.frame = f;
+    label.alpha = JackCombinedAlpha(logo, header);
+    label.hidden = NO;
+    [header bringSubviewToFront:label];
+}
+
+%group JackFeedHeaderHooks
+
+%hook IGHomeFeedHeaderView
+
+- (void)layoutSubviews {
+    %orig;
+    if ([(UIView *)self window])
+        JackLayoutFeedHeader((UIView *)self);
+}
+
+- (void)didMoveToWindow {
+    %orig;
+    if ([(UIView *)self window])
+        [(UIView *)self setNeedsLayout];
+}
+
+%end
+
+%end
+
+#pragma mark - Badge counts
+
+static __weak id JackLatestBadgeData;
+
+static unsigned long long JackBadgeUnsigned(id data, NSString *key) {
+    @try {
+        id v = [data valueForKey:key];
+        if ([v respondsToSelector:@selector(unsignedLongLongValue)])
+            return [v unsignedLongLongValue];
+    } @catch (__unused NSException *e) {
+    }
+    return 0;
+}
+
+static NSInteger JackActivityCount(void) {
+    id data = JackLatestBadgeData;
+    return data ? (NSInteger)JackBadgeUnsigned(data, @"activity") : 0;
+}
+
+static void JackRefreshHeartDots(void);
+
+static void JackApplyAppBadge(void) {
+    id data = JackLatestBadgeData;
+    if (!data)
+        return;
+    unsigned long long total = JackBadgeUnsigned(data, @"totalCount");
+    if (total == 0) {
+        unsigned long long direct = 0;
+        if ([data respondsToSelector:@selector(directMessagesServerCalculated)])
+            direct = [(IGBadgeData *)data directMessagesServerCalculated];
+        total = direct + JackBadgeUnsigned(data, @"activity");
+    }
+    NSInteger count = (NSInteger)MIN(total, 999ULL);
+    if (@available(iOS 16.0, *)) {
+        [[UNUserNotificationCenter currentNotificationCenter] setBadgeCount:count withCompletionHandler:nil];
+    } else {
+        [UIApplication sharedApplication].applicationIconBadgeNumber = count;
+    }
+}
+
+static void JackScheduleBadgeRefresh(void) {
+    static BOOL pending = NO;
+    if (pending)
+        return;
+    pending = YES;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        pending = NO;
+        JackApplyAppBadge();
+        JackRefreshHeartDots();
+    });
+}
+
+%group JackBadgeHooks
+
+%hook IGBadgeData
+
+- (unsigned long long)directMessagesServerCalculated {
+    unsigned long long r = %orig;
+    if (JackLatestBadgeData != self) {
+        JackLatestBadgeData = self;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            JackScheduleBadgeRefresh();
+        });
+    }
+    return r;
+}
+
+%end
+
+%end
+
+#pragma mark - Heart on your own profile
+
+static UIView *JackFindViewOfClass(UIView *root, Class cls) {
+    if (!root || !cls)
+        return nil;
+    if ([root isKindOfClass:cls])
+        return root;
+    for (UIView *sub in root.subviews) {
+        UIView *m = JackFindViewOfClass(sub, cls);
+        if (m)
+            return m;
+    }
+    return nil;
+}
+
+static void JackOpenActivityViaFeedHeart(void) {
+    UIViewController *root = nil;
+    for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if (![scene isKindOfClass:[UIWindowScene class]])
+            continue;
+        for (UIWindow *w in scene.windows)
+            if (w.isKeyWindow)
+                root = w.rootViewController;
+    }
+    Class tabCls = objc_getClass("IGTabBarController");
+    UIViewController *tabs = nil;
+    for (UIViewController *vc = root; vc && !tabs; vc = vc.childViewControllers.firstObject)
+        if (tabCls && [vc isKindOfClass:tabCls])
+            tabs = vc;
+    SEL home = NSSelectorFromString(@"_timelineButtonPressed");
+    if (tabs && [tabs respondsToSelector:home])
+        ((void (*)(id, SEL))objc_msgSend)(tabs, home);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        Class headerCls = SPKResolveIGClass(@"IGHomeFeedHeader.IGHomeFeedHeaderView", @"IGHomeFeedHeaderView");
+        UIView *header = JackFindViewOfClass(root.view, headerCls);
+        UIControl *heart = JackGetter(header, @"activityButton");
+        if ([heart isKindOfClass:[UIControl class]])
+            [heart sendActionsForControlEvents:UIControlEventTouchUpInside];
+        else
+            SPKLog(@"Jack", @"Activity open fell through");
+    });
+}
+
+static void JackOpenActivity(UIButton *sender) {
+    // 1. Instagram's own router, pushed onto the profile tab.
+    NSURL *url = [NSURL URLWithString:@"instagram://news"];
+    Class handler = objc_getClass("IGURLHandler");
+    SEL openSel = @selector(openInternalURL:presentationConfig:controller:animated:userSession:annotation:);
+    if (handler && [handler respondsToSelector:openSel]) {
+        typedef BOOL (*OpenFn)(Class, SEL, id, id, id, BOOL, id, id);
+        if (((OpenFn)objc_msgSend)(handler, openSel, url, nil, topMostController(), YES, [SPKUtils activeUserSession], nil))
+            return;
+    }
+    // 2. The app delegate's URL entry point.
+    if ([SPKUtils openInstagramMediaURL:url dismissingPresentedViewControllers:NO])
+        return;
+    // 3. Last resort: go to Home and press the (hidden) feed heart, so Instagram navigates itself.
+    JackOpenActivityViaFeedHeart();
+}
+
+static void JackRefreshHeartDot(UIButton *heart) {
+    UIView *dot = objc_getAssociatedObject(heart, kJackHeartDotKey);
+    if (!dot) {
+        dot = [UIView new];
+        dot.userInteractionEnabled = NO;
+        dot.backgroundColor = JackRebornRed();
+        dot.layer.cornerRadius = 4.0;
+        dot.frame = CGRectMake(0, 0, 8, 8);
+        objc_setAssociatedObject(heart, kJackHeartDotKey, dot, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        [heart addSubview:dot];
+    }
+    CGRect b = heart.bounds;
+    dot.center = CGPointMake(CGRectGetMidX(b) + 1.0, CGRectGetMaxY(b) - 4.0);
+    dot.hidden = JackActivityCount() == 0;
+}
+
+static NSHashTable<UIButton *> *JackHeartButtons(void) {
+    static NSHashTable *table;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        table = [NSHashTable weakObjectsHashTable];
+    });
+    return table;
+}
+
+static void JackRefreshHeartDots(void) {
+    for (UIButton *heart in JackHeartButtons())
+        JackRefreshHeartDot(heart);
+}
+
+@interface JackHeartButton : UIButton
+@end
+
+@implementation JackHeartButton
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    JackRefreshHeartDot(self);
+}
+- (void)jack_tapped {
+    JackOpenActivity(self);
+}
+- (CGSize)intrinsicContentSize {
+    return CGSizeMake(44, 44);
+}
+@end
+
+extern "C" UIView *JackProfileHeartButton(UIView *header) {
+    JackHeartButton *heart = objc_getAssociatedObject(header, kJackHeartButtonKey);
+    if (heart)
+        return heart;
+    heart = [JackHeartButton buttonWithType:UIButtonTypeSystem];
+    UIImage *glyph = [SPKAssetUtils instagramIconNamed:@"heart" pointSize:24.0 renderingMode:UIImageRenderingModeAlwaysTemplate];
+    [heart setImage:glyph forState:UIControlStateNormal];
+    heart.tintColor = UIColor.labelColor;
+    heart.frame = CGRectMake(0, 0, 44, 44);
+    heart.accessibilityLabel = @"Notifications";
+    heart.accessibilityIdentifier = @"jack-profile-heart";
+    [heart addTarget:heart action:@selector(jack_tapped) forControlEvents:UIControlEventTouchUpInside];
+    objc_setAssociatedObject(header, kJackHeartButtonKey, heart, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    [JackHeartButtons() addObject:heart];
+    return heart;
+}
+
+#pragma mark - Gradient tab icons
+
+static UIImage *JackGradientImage(UIImage *source) {
+    if (!source || source.size.width <= 0 || source.size.height <= 0)
+        return nil;
+    static NSMapTable<UIImage *, UIImage *> *cache;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        cache = [NSMapTable weakToStrongObjectsMapTable];
+    });
+    UIImage *cached = [cache objectForKey:source];
+    if (cached)
+        return cached;
+
+    UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat preferredFormat];
+    format.scale = source.scale;
+    format.opaque = NO;
+    CGRect r = (CGRect){CGPointZero, source.size};
+    UIImage *out = [[[UIGraphicsImageRenderer alloc] initWithSize:source.size format:format]
+        imageWithActions:^(UIGraphicsImageRendererContext *rc) {
+            CGContextRef ctx = rc.CGContext;
+            [[source imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal] drawInRect:r];
+            CGContextSetBlendMode(ctx, kCGBlendModeSourceIn);
+            // Instagram's gradient, yellow bottom-left to purple top-right.
+            CGFloat comps[] = {
+                0.996, 0.855, 0.459, 1.0, // #FEDA75
+                0.980, 0.494, 0.118, 1.0, // #FA7E1E
+                0.839, 0.161, 0.463, 1.0, // #D62976
+                0.588, 0.184, 0.749, 1.0, // #962FBF
+                0.310, 0.357, 0.835, 1.0, // #4F5BD5
+            };
+            CGFloat locs[] = {0.0, 0.25, 0.5, 0.75, 1.0};
+            CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+            CGGradientRef g = CGGradientCreateWithColorComponents(cs, comps, locs, 5);
+            CGContextDrawLinearGradient(ctx, g, CGPointMake(0, r.size.height), CGPointMake(r.size.width, 0), 0);
+            CGGradientRelease(g);
+            CGColorSpaceRelease(cs);
+        }];
+    out = [out imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
+    objc_setAssociatedObject(out, kJackGradientMarkKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    [cache setObject:out forKey:source];
+    return out;
+}
+
+static BOOL JackIsProfileTab(UIButton *button) {
+    NSString *ident = button.accessibilityIdentifier.lowercaseString ?: @"";
+    return [ident containsString:@"profile"] || [ident containsString:@"avatar"];
+}
+
+static void JackApplyGradientToTabButton(UIButton *button) {
+    if (![button isKindOfClass:[UIButton class]] || JackIsProfileTab(button))
+        return;
+    UIControlState states[] = {UIControlStateNormal, UIControlStateHighlighted, UIControlStateSelected,
+                               UIControlStateSelected | UIControlStateHighlighted};
+    for (int i = 0; i < 4; i++) {
+        UIImage *img = [button imageForState:states[i]];
+        if (!img || objc_getAssociatedObject(img, kJackGradientMarkKey))
+            continue;
+        // Only an image set explicitly for this state (not a fallback to Normal).
+        if (i > 0 && img == [button imageForState:UIControlStateNormal])
+            continue;
+        UIImage *grad = JackGradientImage(img);
+        if (grad && grad != img)
+            [button setImage:grad forState:states[i]];
+    }
+}
+
+%group JackTabBarHooks
+
+%hook IGTabBarButton
+
+- (void)layoutSubviews {
+    %orig;
+    JackApplyGradientToTabButton((UIButton *)self);
+}
+
+%end
+
+%hook IGTabBarController
+
+- (void)_layoutTabBar {
+    %orig;
+    id bar = [self respondsToSelector:@selector(tabBar)] ? [(IGTabBarController *)self tabBar] : nil;
+    id buttons = JackGetter(bar, @"buttons");
+    if ([buttons isKindOfClass:[NSArray class]])
+        for (id b in (NSArray *)buttons)
+            JackApplyGradientToTabButton(b);
+}
+
+%end
+
+%end
+
+#pragma mark - Install
+
+extern "C" void JackInstallRebornHooks(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        Class header = SPKResolveIGClass(@"IGHomeFeedHeader.IGHomeFeedHeaderView", @"IGHomeFeedHeaderView");
+        if (header)
+            %init(JackFeedHeaderHooks, IGHomeFeedHeaderView = header);
+        if (objc_getClass("IGTabBarButton") && objc_getClass("IGTabBarController"))
+            %init(JackTabBarHooks);
+        if (objc_getClass("IGBadgeData"))
+            %init(JackBadgeHooks);
+        SPKLog(@"Jack", @"Reborn hooks header=%@", header ? NSStringFromClass(header) : @"(none)");
+
+        // Badge permission (badge only; never alerts or sounds), then keep the icon current.
+        UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
+        [center getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings *settings) {
+            if (settings.authorizationStatus == UNAuthorizationStatusNotDetermined)
+                [center requestAuthorizationWithOptions:UNAuthorizationOptionBadge completionHandler:^(__unused BOOL granted, __unused NSError *error){
+                }];
+        }];
+        for (NSNotificationName name in @[ UIApplicationWillResignActiveNotification, UIApplicationDidEnterBackgroundNotification,
+                                           UIApplicationDidBecomeActiveNotification ]) {
+            [[NSNotificationCenter defaultCenter] addObserverForName:name object:nil queue:NSOperationQueue.mainQueue usingBlock:^(__unused NSNotification *n) {
+                JackApplyAppBadge();
+                JackRefreshHeartDots();
+            }];
+        }
+    });
+}

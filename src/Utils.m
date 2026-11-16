@@ -1,3 +1,4 @@
+#import "Features/Jack/SPKJackProfile.h"
 #import "SPKStrings.h"
 #import "Utils.h"
 #import "App/SPKCore.h"
@@ -1230,6 +1231,9 @@ NSString *SPKEffectivePreferenceKey(NSString *key) {
 id SPKPreferenceObjectForKey(NSString *key) {
     if (key.length == 0)
         return nil;
+    id jackLocked = SPKJackLockedPreference(key);
+    if (jackLocked)
+        return jackLocked;
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     NSString *effectiveKey = SPKEffectivePreferenceKey(key);
     if (![effectiveKey isEqualToString:key]) {
@@ -1249,6 +1253,9 @@ void SPKPreferenceSetObject(id value, NSString *key) {
 static id SPKPrefValueWithMasterOverlay(NSString *key) {
     if (key.length == 0)
         return nil;
+    id jackLocked = SPKJackLockedPreference(key);
+    if (jackLocked)
+        return jackLocked;
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     if (SPKMasterDisableActive() && ![SPKMasterDisableBypassKeys() containsObject:key]) {
         return SPKCoreRegisteredDefaults()[key];
