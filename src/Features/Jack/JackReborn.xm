@@ -472,6 +472,76 @@ extern "C" UIView *JackProfileFollowersButton(UIView *header) {
     return button;
 }
 
+// Instagram 435 builds the profile top bar from Swift, so the array hook never sees it.
+// The followers button and heart are placed by hand, just left of the right-hand menu button.
+static UIViewController *JackOwningViewController(UIView *v) {
+    for (UIResponder *r = v; r; r = r.nextResponder)
+        if ([r isKindOfClass:[UIViewController class]])
+            return (UIViewController *)r;
+    return nil;
+}
+
+extern "C" BOOL JackHeaderIsTabRoot(UIView *header) {
+    UIViewController *vc = JackOwningViewController(header);
+    for (UIViewController *c = vc; c; c = c.parentViewController) {
+        UINavigationController *nav = c.navigationController;
+        if (nav)
+            return nav.viewControllers.firstObject == c || (nav.viewControllers.count == 1);
+    }
+    return NO;
+}
+
+extern "C" void JackPlaceProfileButtons(UIView *header, BOOL ownProfile) {
+    UIView *followers = JackProfileFollowersButton(header);
+    UIView *heart = JackProfileHeartButton(header);
+    if (!ownProfile) {
+        followers.hidden = YES;
+        heart.hidden = YES;
+        return;
+    }
+    CGFloat w = header.bounds.size.width;
+    if (w < 200)
+        return;
+    // Rightmost native control in the right part of the bar (the menu button).
+    UIView *anchor = nil;
+    CGRect anchorFrame = CGRectNull;
+    NSMutableArray<UIView *> *stack = [NSMutableArray arrayWithObject:header];
+    for (int n = 0; stack.count && n < 300; n++) {
+        UIView *v = stack.lastObject;
+        [stack removeLastObject];
+        for (UIView *sub in v.subviews) {
+            if (sub == followers || sub == heart || sub.hidden)
+                continue;
+            if ([sub isKindOfClass:[UIControl class]]) {
+                CGRect f = [sub convertRect:sub.bounds toView:header];
+                if (f.size.width >= 16 && f.size.width <= 64 && f.size.height <= 64 && CGRectGetMinX(f) > w * 0.6 &&
+                    (CGRectIsNull(anchorFrame) || CGRectGetMinX(f) < CGRectGetMinX(anchorFrame))) {
+                    anchor = sub;
+                    anchorFrame = f;
+                }
+                continue;
+            }
+            [stack addObject:sub];
+        }
+    }
+    CGFloat side = 40.0;
+    CGFloat rightX = anchor ? CGRectGetMinX(anchorFrame) - 4.0 : w - 56.0;
+    CGFloat midY = anchor ? CGRectGetMidY(anchorFrame) : header.bounds.size.height - 26.0;
+    CGFloat alpha = anchor ? JackCombinedAlpha(anchor, header) : 1.0;
+    NSArray<UIView *> *order = @[ heart, followers ]; // right to left
+    for (NSUInteger i = 0; i < order.count; i++) {
+        UIView *b = order[i];
+        if (b.superview != header)
+            [header addSubview:b];
+        CGRect f = CGRectMake(round(rightX - side * (i + 1)), round(midY - side / 2.0), side, side);
+        if (!CGRectEqualToRect(b.frame, f))
+            b.frame = f;
+        b.hidden = NO;
+        b.alpha = alpha;
+        [header bringSubviewToFront:b];
+    }
+}
+
 #pragma mark - Gradient tab icons
 
 static UIImage *JackGradientImage(UIImage *source) {
