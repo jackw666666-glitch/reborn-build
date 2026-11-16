@@ -116,6 +116,59 @@ static CGFloat JackWordmarkGroupMaxX(UIImageView *logo, UIView *header, CGRect l
     return maxX;
 }
 
+// Plus (create) button: hidden. Instagram's getter names first, then any small control left of the wordmark.
+static void JackHideCreateButton(UIView *header, CGRect logoFrame) {
+    for (NSString *key in @[ @"cameraButton", @"createButton", @"creationButton", @"newPostButton", @"plusButton", @"composeButton" ]) {
+        id b = JackGetter(header, key);
+        if ([b isKindOfClass:[UIView class]] && !((UIView *)b).hidden)
+            ((UIView *)b).hidden = YES;
+    }
+    NSMutableArray<UIView *> *stack = [NSMutableArray arrayWithObject:header];
+    for (int n = 0; stack.count && n < 400; n++) {
+        UIView *v = stack.lastObject;
+        [stack removeLastObject];
+        for (UIView *sub in v.subviews) {
+            if ([sub isKindOfClass:[UIControl class]]) {
+                CGRect f = [sub convertRect:sub.bounds toView:header];
+                BOOL leftOfLogo = CGRectGetMaxX(f) <= CGRectGetMinX(logoFrame) + 2;
+                BOOL small = f.size.width >= 16 && f.size.width <= 60 && f.size.height <= 60;
+                BOOL sameLine = CGRectGetMidY(f) > CGRectGetMinY(logoFrame) - 10 && CGRectGetMidY(f) < CGRectGetMaxY(logoFrame) + 10;
+                if (leftOfLogo && small && sameLine && !sub.hidden)
+                    sub.hidden = YES;
+                continue;
+            }
+            [stack addObject:sub];
+        }
+    }
+}
+
+// The For you / Following dropdown: its arrow is hidden and the wordmark no longer opens the menu.
+static void JackDisableFeedPicker(UIImageView *logo, UIView *header, CGRect logoFrame, CGFloat drawnMaxX) {
+    UIView *container = logo.superview;
+    for (int up = 0; container && container != header && up < 2; up++, container = container.superview) {
+        for (UIView *sib in container.subviews) {
+            if (sib == logo || sib.hidden || [logo isDescendantOfView:sib] || [sib isKindOfClass:[UILabel class]])
+                continue;
+            CGRect f = [sib convertRect:sib.bounds toView:header];
+            if (f.size.width > 40 || f.size.width < 2)
+                continue;
+            BOOL sameLine = CGRectGetMidY(f) > CGRectGetMinY(logoFrame) && CGRectGetMidY(f) < CGRectGetMaxY(logoFrame);
+            BOOL justAfter = CGRectGetMinX(f) >= drawnMaxX - 4 && CGRectGetMinX(f) <= drawnMaxX + 30;
+            if (sameLine && justAfter)
+                sib.hidden = YES;
+        }
+    }
+    CGFloat limit = header.bounds.size.width * 0.7;
+    for (UIView *v = logo; v && v != header; v = v.superview) {
+        if (v.bounds.size.width > limit)
+            break;
+        if ([v isKindOfClass:[UIControl class]] || v.gestureRecognizers.count) {
+            if (v.userInteractionEnabled)
+                v.userInteractionEnabled = NO;
+        }
+    }
+}
+
 static void JackLayoutFeedHeader(UIView *header) {
     // Heart: removed from the feed (it is on your own profile now).
     UIView *heart = JackGetter(header, @"activityButton");
@@ -142,6 +195,8 @@ static void JackLayoutFeedHeader(UIView *header) {
     CGFloat drawnMinX = CGRectGetMinX(logoFrame);
     if (logo.contentMode == UIViewContentModeScaleAspectFit || logo.contentMode == UIViewContentModeCenter)
         drawnMinX = CGRectGetMidX(logoFrame) - drawnW / 2.0;
+    JackHideCreateButton(header, CGRectMake(drawnMinX, logoFrame.origin.y, drawnW, logoFrame.size.height));
+    JackDisableFeedPicker(logo, header, logoFrame, drawnMinX + drawnW);
     JackSetRebornText(label, drawnH);
     [label sizeToFit];
     CGRect f = label.frame;
