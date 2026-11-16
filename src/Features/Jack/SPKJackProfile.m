@@ -20,7 +20,7 @@ id SPKJackLockedPreference(NSString *key) {
             @"stories_manual_seen_mode" : @"tap",
             @"stories_manual_seen_keep_local" : @YES,
             @"stories_mark_seen_on_like" : @YES, // liking a story shows you watched it (Jack 11/15)
-            @"stories_mark_seen_on_reply" : @NO,
+            @"stories_mark_seen_on_reply" : @YES, // replies and emoji reactions show you watched (Jack 11/15)
             @"stories_confirm_mark_seen" : @YES,
 
             // Long-press previews of stories and chats
