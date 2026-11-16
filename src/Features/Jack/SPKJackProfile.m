@@ -61,7 +61,7 @@ id SPKJackLockedPreference(NSString *key) {
             @"general_hide_suggested_users_activity" : @YES, @"general_hide_suggested_users_reels" : @YES,
             @"general_hide_suggested_users_search" : @YES, @"general_hide_suggested_users_follow_lists" : @YES,
             @"general_hide_suggested_users_subscriptions" : @YES, @"stories_hide_suggested_accounts" : @YES,
-            @"feed_hide_suggested_posts" : @YES, @"feed_hide_suggested_reels" : @YES,
+            @"feed_hide_suggested_posts" : @NO, @"feed_hide_suggested_reels" : @NO, // you want "Suggested for you" posts
         };
     });
     return locked[key];
