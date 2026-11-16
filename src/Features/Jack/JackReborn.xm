@@ -183,6 +183,9 @@ static void JackLayoutFeedHeader(UIView *header) {
         return;
     }
     label = JackRebornLabel(header);
+    // Measure where Instagram put the wordmark, before our centering shift.
+    if (!CGAffineTransformIsIdentity(logo.transform))
+        logo.transform = CGAffineTransformIdentity;
     CGRect logoFrame = [logo convertRect:logo.bounds toView:header];
     // The image is aspect-fit inside its view: measure the drawn glyph, not the view.
     CGSize img = logo.image.size;
@@ -201,7 +204,16 @@ static void JackLayoutFeedHeader(UIView *header) {
     [label sizeToFit];
     CGRect f = label.frame;
     CGFloat groupMaxX = JackWordmarkGroupMaxX(logo, header, logoFrame, drawnMinX + drawnW, label);
-    f.origin.x = round(groupMaxX + 8.0);
+    // Center wordmark + "Reborn" as one group across the header.
+    CGFloat gap = 8.0;
+    CGFloat groupW = (groupMaxX - drawnMinX) + gap + f.size.width;
+    CGFloat dx = round((header.bounds.size.width - groupW) / 2.0 - drawnMinX);
+    CGFloat limit = header.bounds.size.width * 0.7;
+    for (UIView *v = logo.superview; v && v != header && v.bounds.size.width <= limit; v = v.superview)
+        if (v.clipsToBounds)
+            v.clipsToBounds = NO;
+    logo.transform = CGAffineTransformMakeTranslation(dx, 0);
+    f.origin.x = round(groupMaxX + dx + gap);
     // Sit on the wordmark's baseline (the script's descenders hang below it).
     f.origin.y = round(CGRectGetMidY(logoFrame) + drawnH * 0.22 - f.size.height + label.font.descender * -1.0 - 1.0);
     if (!CGRectEqualToRect(label.frame, f))
