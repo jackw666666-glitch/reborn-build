@@ -520,6 +520,59 @@ static void JackCheckPresentedForUpsell(UIViewController *vc, int attempt) {
 
 %end
 
+#pragma mark - "Are you interested in this post?" prompt
+
+// A feed bubble with no stable class, so it is recognised by its question. The highest small
+// ancestor of that label (the bubble, arrow included) is hidden; nothing is tapped or sent.
+static BOOL JackTextIsInterestPrompt(NSString *t) {
+    if (t.length < 20 || t.length > 80)
+        return NO;
+    return [t rangeOfString:@"interested in this post" options:NSCaseInsensitiveSearch].location != NSNotFound;
+}
+
+static void JackHideInterestPrompt(UILabel *label) {
+    __weak UILabel *weakLabel = label;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UILabel *l = weakLabel;
+        if (!l || !l.window)
+            return;
+        UIView *target = nil;
+        for (UIView *v = l.superview; v && ![v isKindOfClass:[UIWindow class]]; v = v.superview) {
+            if ([v isKindOfClass:[UICollectionViewCell class]] || [v isKindOfClass:[UITableViewCell class]] || [v isKindOfClass:[UIScrollView class]])
+                break;
+            if (v.bounds.size.height > 0 && v.bounds.size.height <= 240)
+                target = v;
+            else if (target)
+                break;
+        }
+        if (target) {
+            target.hidden = YES;
+            target.alpha = 0;
+            SPKLog(@"Jack", @"Hid interest prompt %@", NSStringFromClass([target class]));
+        }
+    });
+}
+
+%group JackInterestPromptHooks
+
+%hook UILabel
+
+- (void)setText:(NSString *)text {
+    %orig;
+    if (JackTextIsInterestPrompt(text))
+        JackHideInterestPrompt(self);
+}
+
+- (void)setAttributedText:(NSAttributedString *)text {
+    %orig;
+    if (JackTextIsInterestPrompt(text.string))
+        JackHideInterestPrompt(self);
+}
+
+%end
+
+%end
+
 #pragma mark - Install
 
 extern "C" void JackInstallRebornHooks(void) {
@@ -533,6 +586,7 @@ extern "C" void JackInstallRebornHooks(void) {
         if (objc_getClass("IGBadgeData"))
             %init(JackBadgeHooks);
         %init(JackUpsellHooks);
+        %init(JackInterestPromptHooks);
         SPKLog(@"Jack", @"Reborn hooks header=%@", header ? NSStringFromClass(header) : @"(none)");
 
         // Badge permission (badge only; never alerts or sounds), then keep the icon current.

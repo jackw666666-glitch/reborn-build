@@ -50,6 +50,18 @@ id SPKJackLockedPreference(NSString *key) {
             @"feed_header_button" : @NO,
             @"feed_disable_appicon_gesture" : @YES,
             @"profile_action_btn" : @YES, // its header hook also carries the profile heart
+
+            // Messages tab = messages only
+            @"instants_hide_in_inbox" : @YES, @"instants_disable_creation" : @YES, @"instants_camera_btn" : @NO,
+            @"msgs_hide_notes_tray" : @YES, @"msgs_hide_friends_map" : @YES, @"msgs_hide_reels_blend" : @YES,
+            @"msgs_hide_suggested_chats" : @YES, @"general_hide_suggested_users_msgs" : @YES, @"general_hide_meta_ai_msgs" : @YES,
+
+            // No suggested accounts or posts anywhere
+            @"general_hide_suggested_users_feed" : @YES, @"general_hide_suggested_users_profile" : @YES,
+            @"general_hide_suggested_users_activity" : @YES, @"general_hide_suggested_users_reels" : @YES,
+            @"general_hide_suggested_users_search" : @YES, @"general_hide_suggested_users_follow_lists" : @YES,
+            @"general_hide_suggested_users_subscriptions" : @YES, @"stories_hide_suggested_accounts" : @YES,
+            @"feed_hide_suggested_posts" : @YES, @"feed_hide_suggested_reels" : @YES,
         };
     });
     return locked[key];
