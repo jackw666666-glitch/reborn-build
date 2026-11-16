@@ -11,6 +11,7 @@
 #import "../../Utils.h"
 #import "../../AssetUtils.h"
 #import "../../InstagramHeaders.h"
+#import "../Profile/ProfileAnalyzer/SPKProfileAnalyzerViewController.h"
 #import <UserNotifications/UserNotifications.h>
 #import <objc/runtime.h>
 #import <objc/message.h>
@@ -435,6 +436,40 @@ extern "C" UIView *JackProfileHeartButton(UIView *header) {
     objc_setAssociatedObject(header, kJackHeartButtonKey, heart, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     [JackHeartButtons() addObject:heart];
     return heart;
+}
+
+// Followers button on your own profile: opens the follower analysis (who doesn't follow
+// you back, who unfollowed you and when). Opening it makes no calls; only Scan does.
+static const void *kJackFollowersButtonKey = &kJackFollowersButtonKey;
+
+@interface JackFollowersButton : UIButton
+@end
+
+@implementation JackFollowersButton
+- (void)jack_tapped {
+    [SPKProfileAnalyzerViewController presentFromTop];
+}
+- (CGSize)intrinsicContentSize {
+    return CGSizeMake(44, 44);
+}
+@end
+
+extern "C" UIView *JackProfileFollowersButton(UIView *header) {
+    JackFollowersButton *button = objc_getAssociatedObject(header, kJackFollowersButtonKey);
+    if (button)
+        return button;
+    button = [JackFollowersButton buttonWithType:UIButtonTypeSystem];
+    UIImage *glyph = [SPKAssetUtils instagramIconNamed:@"users" pointSize:24.0 renderingMode:UIImageRenderingModeAlwaysTemplate];
+    if (!glyph)
+        glyph = [UIImage systemImageNamed:@"person.2"];
+    [button setImage:glyph forState:UIControlStateNormal];
+    button.tintColor = UIColor.labelColor;
+    button.frame = CGRectMake(0, 0, 44, 44);
+    button.accessibilityLabel = @"Followers";
+    button.accessibilityIdentifier = @"jack-profile-followers";
+    [button addTarget:button action:@selector(jack_tapped) forControlEvents:UIControlEventTouchUpInside];
+    objc_setAssociatedObject(header, kJackFollowersButtonKey, button, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    return button;
 }
 
 #pragma mark - Gradient tab icons

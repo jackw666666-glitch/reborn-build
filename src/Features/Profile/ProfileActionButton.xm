@@ -653,6 +653,7 @@ static void SPKProfilePlaceActionButton(UIView *headerView, BOOL titleIsCentered
 }
 
 extern "C" UIView *JackProfileHeartButton(UIView *header);
+extern "C" UIView *JackProfileFollowersButton(UIView *header);
 static void (*orig_profileHeaderConfigure)(id, SEL, id, id, id, BOOL);
 
 static void hooked_configureProfileHeaderView(id self, SEL _cmd, id titleView, id leftButtons, id rightButtons, BOOL titleIsCentered) {
@@ -679,12 +680,11 @@ static void hooked_configureProfileHeaderView(id self, SEL _cmd, id titleView, i
 
     // JACK BUILD: the notifications heart lives on your own profile (removed from the feed).
     if (ownProfile && [rightButtons isKindOfClass:[NSArray class]]) {
-        UIView *heart = JackProfileHeartButton((UIView *)self);
-        if (heart && ![rightButtons containsObject:heart]) {
-            NSMutableArray *m = [rightButtons mutableCopy];
-            [m addObject:heart];
-            rightButtons = [m copy];
-        }
+        NSMutableArray *m = [rightButtons mutableCopy];
+        for (UIView *extra in @[ JackProfileFollowersButton((UIView *)self), JackProfileHeartButton((UIView *)self) ])
+            if (extra && ![m containsObject:extra])
+                [m addObject:extra];
+        rightButtons = [m copy];
     }
 
     orig_profileHeaderConfigure(self, _cmd, titleView, leftButtons, rightButtons, titleIsCentered);
