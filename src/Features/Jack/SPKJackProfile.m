@@ -42,6 +42,9 @@ id SPKJackLockedPreference(NSString *key) {
             // Lower exposure: no desktop-browser imitation for 4K photos
             @"downloads_fetch_4k_images" : @NO,
 
+            // Meta's promotions for its own products (Meta Verified / Meta One) out of the feed
+            @"feed_hide_meta_promotions" : @YES,
+
             // Sparkle stays out of sight
             @"tools_open_settings_on_launch" : @NO,
             @"feed_header_button" : @NO,

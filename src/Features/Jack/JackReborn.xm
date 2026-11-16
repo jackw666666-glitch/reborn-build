@@ -78,19 +78,42 @@ static UILabel *JackRebornLabel(UIView *header) {
 }
 
 static void JackSetRebornText(UILabel *label, CGFloat height) {
-    CGFloat size = MAX(14.0, round(height * 0.95));
+    // Clean and small next to the script wordmark: semibold sans, thin underline.
+    CGFloat size = MAX(12.0, round(height * 0.5));
     if (label.font && fabs(label.font.pointSize - size) < 0.5 && label.attributedText.length)
         return;
-    UIFont *font = [UIFont fontWithName:@"SnellRoundhand-Black" size:size]
-                       ?: [UIFont fontWithName:@"SnellRoundhand-Bold" size:size]
-                       ?: [UIFont systemFontOfSize:size * 0.8 weight:UIFontWeightHeavy];
+    UIFont *font = [UIFont systemFontOfSize:size weight:UIFontWeightSemibold];
     label.font = font;
     label.attributedText = [[NSAttributedString alloc] initWithString:@"Reborn" attributes:@{
         NSFontAttributeName : font,
         NSForegroundColorAttributeName : JackRebornRed(),
-        NSUnderlineStyleAttributeName : @(NSUnderlineStyleThick),
+        NSKernAttributeName : @(0.3),
+        NSUnderlineStyleAttributeName : @(NSUnderlineStyleSingle),
         NSUnderlineColorAttributeName : JackRebornRed(),
     }];
+}
+
+// Right edge of the wordmark group: the wordmark plus anything drawn just after it on the
+// same line (the For you / Following arrow), so "Reborn" never covers it.
+static CGFloat JackWordmarkGroupMaxX(UIImageView *logo, UIView *header, CGRect logoFrame, CGFloat drawnMaxX, UILabel *label) {
+    CGFloat maxX = drawnMaxX;
+    UIView *container = logo.superview;
+    for (int up = 0; container && container != header && up < 2; up++, container = container.superview) {
+        for (UIView *sib in container.subviews) {
+            if (sib == logo || sib == label || sib.hidden || sib.alpha < 0.05)
+                continue;
+            if ([logo isDescendantOfView:sib])
+                continue;
+            CGRect f = [sib convertRect:sib.bounds toView:header];
+            if (f.size.width > 60 || f.size.width < 2)
+                continue;
+            BOOL sameLine = CGRectGetMidY(f) > CGRectGetMinY(logoFrame) && CGRectGetMidY(f) < CGRectGetMaxY(logoFrame);
+            BOOL justAfter = CGRectGetMinX(f) >= drawnMaxX - 4 && CGRectGetMinX(f) <= drawnMaxX + 30;
+            if (sameLine && justAfter)
+                maxX = MAX(maxX, CGRectGetMaxX(f));
+        }
+    }
+    return maxX;
 }
 
 static void JackLayoutFeedHeader(UIView *header) {
@@ -122,8 +145,10 @@ static void JackLayoutFeedHeader(UIView *header) {
     JackSetRebornText(label, drawnH);
     [label sizeToFit];
     CGRect f = label.frame;
-    f.origin.x = round(drawnMinX + drawnW + 6.0);
-    f.origin.y = round(CGRectGetMidY(logoFrame) - f.size.height / 2.0 + drawnH * 0.08);
+    CGFloat groupMaxX = JackWordmarkGroupMaxX(logo, header, logoFrame, drawnMinX + drawnW, label);
+    f.origin.x = round(groupMaxX + 8.0);
+    // Sit on the wordmark's baseline (the script's descenders hang below it).
+    f.origin.y = round(CGRectGetMidY(logoFrame) + drawnH * 0.22 - f.size.height + label.font.descender * -1.0 - 1.0);
     if (!CGRectEqualToRect(label.frame, f))
         label.frame = f;
     label.alpha = JackCombinedAlpha(logo, header);
@@ -438,6 +463,63 @@ static void JackApplyGradientToTabButton(UIButton *button) {
 
 %end
 
+#pragma mark - Meta One / Meta Verified upsell blocker
+
+// The upsell is a server-built sheet with no stable class, so it is recognised by its words:
+// whatever gets presented is read a few times as it loads, and closed if it is the upsell.
+static BOOL JackTextIsMetaUpsell(NSString *t) {
+    if (t.length == 0)
+        return NO;
+    NSString *l = t.lowercaseString;
+    return [l containsString:@"meta one"] || [l containsString:@"meta verified"] || [l containsString:@"verified badge"];
+}
+
+static BOOL JackViewShowsMetaUpsell(UIView *v, int depth) {
+    if (!v || depth > 40)
+        return NO;
+    if (JackTextIsMetaUpsell(v.accessibilityLabel))
+        return YES;
+    if ([v isKindOfClass:[UILabel class]] && (JackTextIsMetaUpsell(((UILabel *)v).text) || JackTextIsMetaUpsell(((UILabel *)v).attributedText.string)))
+        return YES;
+    if ([v isKindOfClass:[UITextView class]] && JackTextIsMetaUpsell(((UITextView *)v).text))
+        return YES;
+    for (UIView *sub in v.subviews)
+        if (JackViewShowsMetaUpsell(sub, depth + 1))
+            return YES;
+    return NO;
+}
+
+static void JackCheckPresentedForUpsell(UIViewController *vc, int attempt) {
+    if (!vc || attempt > 5)
+        return;
+    double delays[] = {0.15, 0.4, 0.8, 1.4, 2.2, 3.5};
+    __weak UIViewController *weakVC = vc;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delays[attempt] * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        UIViewController *strong = weakVC;
+        if (!strong || !strong.presentingViewController || strong.isBeingDismissed)
+            return;
+        if (strong.isViewLoaded && JackViewShowsMetaUpsell(strong.view, 0)) {
+            SPKLog(@"Jack", @"Closed Meta upsell %@", NSStringFromClass([strong class]));
+            [strong.presentingViewController dismissViewControllerAnimated:NO completion:nil];
+            return;
+        }
+        JackCheckPresentedForUpsell(strong, attempt + 1);
+    });
+}
+
+%group JackUpsellHooks
+
+%hook UIViewController
+
+- (void)presentViewController:(UIViewController *)vc animated:(BOOL)animated completion:(id)completion {
+    %orig;
+    JackCheckPresentedForUpsell(vc, 0);
+}
+
+%end
+
+%end
+
 #pragma mark - Install
 
 extern "C" void JackInstallRebornHooks(void) {
@@ -450,6 +532,7 @@ extern "C" void JackInstallRebornHooks(void) {
             %init(JackTabBarHooks);
         if (objc_getClass("IGBadgeData"))
             %init(JackBadgeHooks);
+        %init(JackUpsellHooks);
         SPKLog(@"Jack", @"Reborn hooks header=%@", header ? NSStringFromClass(header) : @"(none)");
 
         // Badge permission (badge only; never alerts or sounds), then keep the icon current.
