@@ -51,6 +51,9 @@ id SPKJackLockedPreference(NSString *key) {
             @"feed_disable_appicon_gesture" : @YES,
             @"profile_action_btn" : @YES, // its header hook also carries the profile heart
 
+            // Reels can't be liked (tap or double-tap); unliking an old like still works
+            @"reels_confirm_like" : @YES, @"reels_confirm_double_tap_like" : @YES, @"jack_block_reel_likes" : @YES,
+
             // Messages tab = messages only
             @"instants_hide_in_inbox" : @YES, @"instants_disable_creation" : @YES, @"instants_camera_btn" : @NO,
             @"msgs_hide_notes_tray" : @YES, @"msgs_hide_friends_map" : @YES, @"msgs_hide_reels_blend" : @YES,

@@ -362,6 +362,8 @@ static BOOL SPKCommentButtonIsDislike(id button) {
     if ([SPKUtils getBoolPref:@"reels_confirm_like"]) {                                              \
         BOOL isUnlike = SPKFeedLikeIsUnlike((button), (context));                                    \
         SPKLog(@"General", @"[Sparkle] Confirm reels %@ triggered", isUnlike ? @"unlike" : @"like"); \
+        if (!isUnlike && [SPKUtils getBoolPref:@"jack_block_reel_likes"])                            \
+            return; /* JACK BUILD: reels can't be liked (unliking still works) */                    \
         SPKPresentLikeToggleConfirmation(                                                            \
             isUnlike,                                                                                \
             SPKL(@"FEED_LIKE_CONFIRM_CONFIRM_REEL_LIKE_TEXT"),                                                                    \
@@ -379,6 +381,8 @@ static BOOL SPKCommentButtonIsDislike(id button) {
     if ([SPKUtils getBoolPref:@"reels_confirm_double_tap_like"]) {                                              \
         BOOL isUnlike = SPKFeedLikeIsUnlike(nil, (context));                                                    \
         SPKLog(@"General", @"[Sparkle] Confirm reels double-tap %@ triggered", isUnlike ? @"unlike" : @"like"); \
+        if (!isUnlike && [SPKUtils getBoolPref:@"jack_block_reel_likes"])                                       \
+            return; /* JACK BUILD: reels can't be liked */                                                      \
         SPKPresentLikeToggleConfirmation(                                                                       \
             isUnlike,                                                                                           \
             SPKL(@"FEED_LIKE_CONFIRM_CONFIRM_REEL_LIKE_TEXT"),                                                                               \
@@ -813,6 +817,8 @@ static void spkReelsLikeHandlerTap(id self, SEL _cmd, id context, id likeButton,
     __strong id strongButton = likeButton;
     BOOL isUnlike = SPKFeedLikeIsUnlike(strongButton, strongContext);
     SPKLog(@"General", @"[Sparkle] Confirm reels %@ triggered", isUnlike ? @"unlike" : @"like");
+    if (!isUnlike && [SPKUtils getBoolPref:@"jack_block_reel_likes"])
+        return; // JACK BUILD: reels can't be liked (unliking still works)
     SPKPresentLikeToggleConfirmation(
         isUnlike,
         SPKL(@"FEED_LIKE_CONFIRM_CONFIRM_REEL_LIKE_TEXT"),
@@ -838,6 +844,8 @@ static void spkReelsLikeHandlerTapCompletion(id self, SEL _cmd, id context, id l
     id strongCompletion = completion ? [completion copy] : nil;
     BOOL isUnlike = SPKFeedLikeIsUnlike(strongButton, strongContext);
     SPKLog(@"General", @"[Sparkle] Confirm reels %@ triggered", isUnlike ? @"unlike" : @"like");
+    if (!isUnlike && [SPKUtils getBoolPref:@"jack_block_reel_likes"])
+        return; // JACK BUILD: reels can't be liked (unliking still works)
     SPKPresentLikeToggleConfirmation(
         isUnlike,
         SPKL(@"FEED_LIKE_CONFIRM_CONFIRM_REEL_LIKE_TEXT"),
