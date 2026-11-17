@@ -53,6 +53,7 @@ id SPKJackLockedPreference(NSString *key) {
 
             // Reels can't be liked (tap or double-tap); unliking an old like still works
             @"reels_confirm_like" : @YES, @"reels_confirm_double_tap_like" : @YES, @"jack_block_reel_likes" : @YES,
+            @"reels_hide_header" : @YES, // no Reels / Friends bar, plus or sliders button on top of reels
 
             // Messages tab = messages only
             @"instants_hide_in_inbox" : @YES, @"instants_disable_creation" : @YES, @"instants_camera_btn" : @NO,
