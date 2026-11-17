@@ -747,8 +747,10 @@ static void JackHideInterestPrompt(UILabel *label) {
 
 #pragma mark - Reels fade to full screen
 
-// After a couple of seconds untouched, everything on a reel except the video fades away (buttons,
-// caption, audio row, tab bar). Any nudge of the feed or a tap brings it all back. Purely visual.
+// Reels play full screen: after a couple of seconds the buttons, caption and tab icons fade away and
+// stay away while scrolling. First tap brings them back (and is swallowed, so it doesn't pause);
+// a tap while they're showing pauses as normal. Blurs and gradients along the bottom are kept.
+// Purely visual.
 static const NSTimeInterval kJackReelsIdle = 2.5;
 static const void *kJackReelsImmersiveKey = &kJackReelsImmersiveKey;
 static const void *kJackSavedAlphaKey = &kJackSavedAlphaKey;
@@ -757,6 +759,14 @@ static BOOL JackViewIsVideo(UIView *v) {
     NSString *n = NSStringFromClass([v class]);
     return [n containsString:@"VideoPlaybackView"] || [n containsString:@"PlayerView"] || [v isKindOfClass:[UIScrollView class]] ||
            ([v isKindOfClass:[UIImageView class]] && v.bounds.size.height > 300);
+}
+
+// Background blur / gradient scrims stay.
+static BOOL JackViewIsBackdrop(UIView *v) {
+    if ([v isKindOfClass:[UIVisualEffectView class]] || [v.layer isKindOfClass:[CAGradientLayer class]])
+        return YES;
+    NSString *n = NSStringFromClass([v class]);
+    return [n containsString:@"Gradient"] || [n containsString:@"Blur"] || [n containsString:@"Scrim"] || [n containsString:@"Backdrop"];
 }
 
 static BOOL JackContainsVideo(UIView *v, int depth) {
@@ -770,23 +780,33 @@ static BOOL JackContainsVideo(UIView *v, int depth) {
     return NO;
 }
 
-// Every view on top of the media: siblings of the branch that holds the video.
+static BOOL JackContainsBackdrop(UIView *v, int depth) {
+    if (JackViewIsBackdrop(v))
+        return YES;
+    if (depth > 4)
+        return NO;
+    for (UIView *sub in v.subviews)
+        if (JackContainsBackdrop(sub, depth + 1))
+            return YES;
+    return NO;
+}
+
+// Every view on top of the media: siblings of the branch that holds the video, minus backdrops.
 static void JackCollectOverlays(UIView *v, NSMutableArray<UIView *> *out, int depth) {
     for (UIView *sub in v.subviews) {
-        if (JackViewIsVideo(sub))
+        if (JackViewIsVideo(sub) || JackViewIsBackdrop(sub))
             continue;
-        if (depth < 6 && JackContainsVideo(sub, 0))
+        if (depth < 8 && (JackContainsVideo(sub, 0) || JackContainsBackdrop(sub, 0)))
             JackCollectOverlays(sub, out, depth + 1);
         else
             [out addObject:sub];
     }
 }
 
-@interface JackReelsImmersive : NSObject
+@interface JackReelsImmersive : NSObject <UIGestureRecognizerDelegate>
 @property (nonatomic, weak) UIViewController *controller;
 @property (nonatomic, strong) NSTimer *timer;
 @property (nonatomic, assign) CFTimeInterval lastActivity;
-@property (nonatomic, assign) CGPoint lastOffset;
 @property (nonatomic, assign) BOOL faded;
 @property (nonatomic, strong) NSHashTable<UIView *> *fadedViews;
 @property (nonatomic, strong) UITapGestureRecognizer *tap;
@@ -807,12 +827,13 @@ static void JackCollectOverlays(UIView *v, NSMutableArray<UIView *> *out, int de
 }
 
 - (void)start {
-    self.fadedViews = [NSHashTable weakObjectsHashTable];
+    if (!self.fadedViews)
+        self.fadedViews = [NSHashTable weakObjectsHashTable];
     self.lastActivity = CACurrentMediaTime();
     if (!self.tap) {
-        self.tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(touched)];
-        self.tap.cancelsTouchesInView = NO;
-        self.tap.delaysTouchesEnded = NO;
+        self.tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(revealTap)];
+        self.tap.delegate = self;
+        self.tap.cancelsTouchesInView = YES;
         [self.controller.view addGestureRecognizer:self.tap];
     }
     [self.timer invalidate];
@@ -828,10 +849,18 @@ static void JackCollectOverlays(UIView *v, NSMutableArray<UIView *> *out, int de
     [self showAnimated:NO];
 }
 
-- (void)touched {
+// Only claims a tap while faded; then Instagram's own taps (pause, mute) wait for it and lose.
+- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)g {
+    return self.faded;
+}
+
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)g shouldBeRequiredToFailByGestureRecognizer:(UIGestureRecognizer *)other {
+    return g == self.tap && [other isKindOfClass:[UITapGestureRecognizer class]];
+}
+
+- (void)revealTap {
     self.lastActivity = CACurrentMediaTime();
-    if (self.faded)
-        [self showAnimated:YES];
+    [self showAnimated:YES];
 }
 
 - (void)tick {
@@ -840,19 +869,22 @@ static void JackCollectOverlays(UIView *v, NSMutableArray<UIView *> *out, int de
         [self stop];
         return;
     }
-    UICollectionView *cv = [self collectionView];
-    CGPoint offset = cv ? cv.contentOffset : CGPointZero;
-    BOOL moved = fabs(offset.y - self.lastOffset.y) > 0.5 || fabs(offset.x - self.lastOffset.x) > 0.5 || cv.isTracking;
-    self.lastOffset = offset;
-    if (moved) {
-        [self touched];
+    // A sheet over the reel (comments, share) keeps everything visible.
+    if (vc.presentedViewController) {
+        self.lastActivity = CACurrentMediaTime();
+        if (self.faded)
+            [self showAnimated:YES];
         return;
     }
-    // A sheet over the reel (comments, share) keeps everything visible.
-    if (vc.presentedViewController)
-        self.lastActivity = CACurrentMediaTime();
-    if (!self.faded && CACurrentMediaTime() - self.lastActivity > kJackReelsIdle)
-        [self fade];
+    UICollectionView *cv = [self collectionView];
+    if (!self.faded) {
+        // Scrolling while controls show doesn't count as using them.
+        if (CACurrentMediaTime() - self.lastActivity > kJackReelsIdle)
+            [self fadeAnimated:YES];
+    } else {
+        // Stay full screen while scrolling: newly shown reels fade straight away.
+        [self fadeAnimated:cv.isDragging || cv.isDecelerating ? NO : YES];
+    }
 }
 
 - (NSArray<UIView *> *)targets {
@@ -860,35 +892,49 @@ static void JackCollectOverlays(UIView *v, NSMutableArray<UIView *> *out, int de
     UICollectionView *cv = [self collectionView];
     for (UICollectionViewCell *cell in cv.visibleCells)
         JackCollectOverlays(cell.contentView, out, 0);
-    UITabBar *bar = self.controller.tabBarController.tabBar;
-    if (bar)
-        [out addObject:bar];
-    else {
+    // Tab bar: its icons fade, its blurred background stays.
+    UIView *bar = self.controller.tabBarController.tabBar;
+    if (!bar) {
         UIViewController *tbc = self.controller;
         while (tbc && ![NSStringFromClass([tbc class]) containsString:@"TabBarController"])
             tbc = tbc.parentViewController;
         id igBar = tbc ? JackGetter(tbc, @"tabBar") : nil;
         if ([igBar isKindOfClass:[UIView class]])
-            [out addObject:igBar];
+            bar = igBar;
+    }
+    id buttons = bar ? JackGetter(bar, @"buttons") : nil;
+    if ([buttons isKindOfClass:[NSArray class]]) {
+        for (id b in (NSArray *)buttons)
+            if ([b isKindOfClass:[UIView class]])
+                [out addObject:b];
+    } else if (bar) {
+        JackCollectOverlays(bar, out, 0);
     }
     return out;
 }
 
-- (void)fade {
-    NSArray<UIView *> *views = [self targets];
-    if (!views.count)
-        return;
-    self.faded = YES;
-    for (UIView *v in views) {
-        if (v.alpha < 0.02 || v.hidden)
+- (void)fadeAnimated:(BOOL)animated {
+    NSMutableArray<UIView *> *fresh = [NSMutableArray array];
+    for (UIView *v in [self targets]) {
+        if ([self.fadedViews containsObject:v] || v.alpha < 0.02 || v.hidden)
             continue;
         objc_setAssociatedObject(v, kJackSavedAlphaKey, @(v.alpha), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         [self.fadedViews addObject:v];
+        [fresh addObject:v];
     }
-    [UIView animateWithDuration:0.6 delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{
-        for (UIView *v in self.fadedViews)
+    if (!self.faded && !fresh.count)
+        return;
+    self.faded = YES;
+    if (!fresh.count)
+        return;
+    void (^hide)(void) = ^{
+        for (UIView *v in fresh)
             v.alpha = 0.0;
-    } completion:nil];
+    };
+    if (animated)
+        [UIView animateWithDuration:0.6 delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:hide completion:nil];
+    else
+        hide();
 }
 
 - (void)showAnimated:(BOOL)animated {
