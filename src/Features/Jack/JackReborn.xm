@@ -745,6 +745,201 @@ static void JackHideInterestPrompt(UILabel *label) {
 
 %end
 
+#pragma mark - Reels fade to full screen
+
+// After a couple of seconds untouched, everything on a reel except the video fades away (buttons,
+// caption, audio row, tab bar). Any nudge of the feed or a tap brings it all back. Purely visual.
+static const NSTimeInterval kJackReelsIdle = 2.5;
+static const void *kJackReelsImmersiveKey = &kJackReelsImmersiveKey;
+static const void *kJackSavedAlphaKey = &kJackSavedAlphaKey;
+
+static BOOL JackViewIsVideo(UIView *v) {
+    NSString *n = NSStringFromClass([v class]);
+    return [n containsString:@"VideoPlaybackView"] || [n containsString:@"PlayerView"] || [v isKindOfClass:[UIScrollView class]] ||
+           ([v isKindOfClass:[UIImageView class]] && v.bounds.size.height > 300);
+}
+
+static BOOL JackContainsVideo(UIView *v, int depth) {
+    if (JackViewIsVideo(v))
+        return YES;
+    if (depth > 6)
+        return NO;
+    for (UIView *sub in v.subviews)
+        if (JackContainsVideo(sub, depth + 1))
+            return YES;
+    return NO;
+}
+
+// Every view on top of the media: siblings of the branch that holds the video.
+static void JackCollectOverlays(UIView *v, NSMutableArray<UIView *> *out, int depth) {
+    for (UIView *sub in v.subviews) {
+        if (JackViewIsVideo(sub))
+            continue;
+        if (depth < 6 && JackContainsVideo(sub, 0))
+            JackCollectOverlays(sub, out, depth + 1);
+        else
+            [out addObject:sub];
+    }
+}
+
+@interface JackReelsImmersive : NSObject
+@property (nonatomic, weak) UIViewController *controller;
+@property (nonatomic, strong) NSTimer *timer;
+@property (nonatomic, assign) CFTimeInterval lastActivity;
+@property (nonatomic, assign) CGPoint lastOffset;
+@property (nonatomic, assign) BOOL faded;
+@property (nonatomic, strong) NSHashTable<UIView *> *fadedViews;
+@property (nonatomic, strong) UITapGestureRecognizer *tap;
+@end
+
+@implementation JackReelsImmersive
+
+- (UICollectionView *)collectionView {
+    NSMutableArray<UIView *> *stack = [NSMutableArray arrayWithObject:self.controller.view];
+    for (int n = 0; stack.count && n < 200; n++) {
+        UIView *v = stack.firstObject;
+        [stack removeObjectAtIndex:0];
+        if ([v isKindOfClass:[UICollectionView class]])
+            return (UICollectionView *)v;
+        [stack addObjectsFromArray:v.subviews];
+    }
+    return nil;
+}
+
+- (void)start {
+    self.fadedViews = [NSHashTable weakObjectsHashTable];
+    self.lastActivity = CACurrentMediaTime();
+    if (!self.tap) {
+        self.tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(touched)];
+        self.tap.cancelsTouchesInView = NO;
+        self.tap.delaysTouchesEnded = NO;
+        [self.controller.view addGestureRecognizer:self.tap];
+    }
+    [self.timer invalidate];
+    __weak typeof(self) weakSelf = self;
+    self.timer = [NSTimer scheduledTimerWithTimeInterval:0.2 repeats:YES block:^(__unused NSTimer *t) {
+        [weakSelf tick];
+    }];
+}
+
+- (void)stop {
+    [self.timer invalidate];
+    self.timer = nil;
+    [self showAnimated:NO];
+}
+
+- (void)touched {
+    self.lastActivity = CACurrentMediaTime();
+    if (self.faded)
+        [self showAnimated:YES];
+}
+
+- (void)tick {
+    UIViewController *vc = self.controller;
+    if (!vc || !vc.viewIfLoaded.window) {
+        [self stop];
+        return;
+    }
+    UICollectionView *cv = [self collectionView];
+    CGPoint offset = cv ? cv.contentOffset : CGPointZero;
+    BOOL moved = fabs(offset.y - self.lastOffset.y) > 0.5 || fabs(offset.x - self.lastOffset.x) > 0.5 || cv.isTracking;
+    self.lastOffset = offset;
+    if (moved) {
+        [self touched];
+        return;
+    }
+    // A sheet over the reel (comments, share) keeps everything visible.
+    if (vc.presentedViewController)
+        self.lastActivity = CACurrentMediaTime();
+    if (!self.faded && CACurrentMediaTime() - self.lastActivity > kJackReelsIdle)
+        [self fade];
+}
+
+- (NSArray<UIView *> *)targets {
+    NSMutableArray<UIView *> *out = [NSMutableArray array];
+    UICollectionView *cv = [self collectionView];
+    for (UICollectionViewCell *cell in cv.visibleCells)
+        JackCollectOverlays(cell.contentView, out, 0);
+    UITabBar *bar = self.controller.tabBarController.tabBar;
+    if (bar)
+        [out addObject:bar];
+    else {
+        UIViewController *tbc = self.controller;
+        while (tbc && ![NSStringFromClass([tbc class]) containsString:@"TabBarController"])
+            tbc = tbc.parentViewController;
+        id igBar = tbc ? JackGetter(tbc, @"tabBar") : nil;
+        if ([igBar isKindOfClass:[UIView class]])
+            [out addObject:igBar];
+    }
+    return out;
+}
+
+- (void)fade {
+    NSArray<UIView *> *views = [self targets];
+    if (!views.count)
+        return;
+    self.faded = YES;
+    for (UIView *v in views) {
+        if (v.alpha < 0.02 || v.hidden)
+            continue;
+        objc_setAssociatedObject(v, kJackSavedAlphaKey, @(v.alpha), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        [self.fadedViews addObject:v];
+    }
+    [UIView animateWithDuration:0.6 delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{
+        for (UIView *v in self.fadedViews)
+            v.alpha = 0.0;
+    } completion:nil];
+}
+
+- (void)showAnimated:(BOOL)animated {
+    if (!self.faded)
+        return;
+    self.faded = NO;
+    NSArray<UIView *> *views = self.fadedViews.allObjects;
+    [self.fadedViews removeAllObjects];
+    void (^restore)(void) = ^{
+        for (UIView *v in views) {
+            NSNumber *a = objc_getAssociatedObject(v, kJackSavedAlphaKey);
+            v.alpha = a ? a.doubleValue : 1.0;
+            objc_setAssociatedObject(v, kJackSavedAlphaKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+    };
+    if (animated)
+        [UIView animateWithDuration:0.25 delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:restore completion:nil];
+    else
+        restore();
+}
+
+@end
+
+static JackReelsImmersive *JackImmersiveFor(UIViewController *vc) {
+    JackReelsImmersive *m = objc_getAssociatedObject(vc, kJackReelsImmersiveKey);
+    if (!m) {
+        m = [JackReelsImmersive new];
+        m.controller = vc;
+        objc_setAssociatedObject(vc, kJackReelsImmersiveKey, m, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    return m;
+}
+
+%group JackReelsImmersiveHooks
+
+%hook IGSundialFeedViewController
+
+- (void)viewDidAppear:(BOOL)animated {
+    %orig;
+    [JackImmersiveFor((UIViewController *)self) start];
+}
+
+- (void)viewWillDisappear:(BOOL)animated {
+    [JackImmersiveFor((UIViewController *)self) stop];
+    %orig;
+}
+
+%end
+
+%end
+
 #pragma mark - Install
 
 extern "C" void JackInstallRebornHooks(void) {
@@ -759,6 +954,8 @@ extern "C" void JackInstallRebornHooks(void) {
             %init(JackBadgeHooks);
         %init(JackUpsellHooks);
         %init(JackInterestPromptHooks);
+        if (objc_getClass("IGSundialFeedViewController"))
+            %init(JackReelsImmersiveHooks);
         SPKLog(@"Jack", @"Reborn hooks header=%@", header ? NSStringFromClass(header) : @"(none)");
 
         // Badge permission (badge only; never alerts or sounds), then keep the icon current.
