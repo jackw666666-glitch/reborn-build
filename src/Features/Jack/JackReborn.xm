@@ -757,11 +757,11 @@ static const void *kJackSavedAlphaKey = &kJackSavedAlphaKey;
 
 static BOOL JackViewIsVideo(UIView *v) {
     NSString *n = NSStringFromClass([v class]);
-    return [n containsString:@"VideoPlaybackView"] || [n containsString:@"PlayerView"] || [v isKindOfClass:[UIScrollView class]] ||
+    return [n containsString:@"VideoPlaybackView"] || [n containsString:@"PlayerView"] || [n containsString:@"PlayerLayerView"] ||
            ([v isKindOfClass:[UIImageView class]] && v.bounds.size.height > 300);
 }
 
-// Background blur / gradient scrims stay.
+// Background blur / gradient scrims stay; what sits on them still fades.
 static BOOL JackViewIsBackdrop(UIView *v) {
     if ([v isKindOfClass:[UIVisualEffectView class]] || [v.layer isKindOfClass:[CAGradientLayer class]])
         return YES;
@@ -769,34 +769,35 @@ static BOOL JackViewIsBackdrop(UIView *v) {
     return [n containsString:@"Gradient"] || [n containsString:@"Blur"] || [n containsString:@"Scrim"] || [n containsString:@"Backdrop"];
 }
 
-static BOOL JackContainsVideo(UIView *v, int depth) {
-    if (JackViewIsVideo(v))
+static BOOL JackContainsKeep(UIView *v, int depth) {
+    if (JackViewIsVideo(v) || JackViewIsBackdrop(v) || [v isKindOfClass:[UICollectionView class]])
         return YES;
-    if (depth > 6)
+    if (depth > 7)
         return NO;
     for (UIView *sub in v.subviews)
-        if (JackContainsVideo(sub, depth + 1))
+        if (JackContainsKeep(sub, depth + 1))
             return YES;
     return NO;
 }
 
-static BOOL JackContainsBackdrop(UIView *v, int depth) {
-    if (JackViewIsBackdrop(v))
-        return YES;
-    if (depth > 4)
-        return NO;
-    for (UIView *sub in v.subviews)
-        if (JackContainsBackdrop(sub, depth + 1))
-            return YES;
-    return NO;
-}
-
-// Every view on top of the media: siblings of the branch that holds the video, minus backdrops.
 static void JackCollectOverlays(UIView *v, NSMutableArray<UIView *> *out, int depth) {
     for (UIView *sub in v.subviews) {
-        if (JackViewIsVideo(sub) || JackViewIsBackdrop(sub))
+        if (sub.hidden)
             continue;
-        if (depth < 8 && (JackContainsVideo(sub, 0) || JackContainsBackdrop(sub, 0)))
+        if ([sub isKindOfClass:[UICollectionView class]]) {
+            for (UICollectionViewCell *cell in ((UICollectionView *)sub).visibleCells)
+                JackCollectOverlays(cell.contentView, out, depth + 1);
+            continue;
+        }
+        if (JackViewIsVideo(sub))
+            continue;
+        if (JackViewIsBackdrop(sub)) {
+            UIView *inner = [sub isKindOfClass:[UIVisualEffectView class]] ? ((UIVisualEffectView *)sub).contentView : sub;
+            if (depth < 12)
+                JackCollectOverlays(inner, out, depth + 1);
+            continue;
+        }
+        if (depth < 12 && JackContainsKeep(sub, 0))
             JackCollectOverlays(sub, out, depth + 1);
         else
             [out addObject:sub];
@@ -838,9 +839,17 @@ static void JackCollectOverlays(UIView *v, NSMutableArray<UIView *> *out, int de
     }
     [self.timer invalidate];
     __weak typeof(self) weakSelf = self;
-    self.timer = [NSTimer scheduledTimerWithTimeInterval:0.2 repeats:YES block:^(__unused NSTimer *t) {
+    self.timer = [NSTimer scheduledTimerWithTimeInterval:0.1 repeats:YES block:^(__unused NSTimer *t) {
         [weakSelf tick];
     }];
+    [NSRunLoop.mainRunLoop addTimer:self.timer forMode:NSRunLoopCommonModes]; // keep ticking while scrolling
+    // Full screen from the start.
+    [self fadeAnimated:NO];
+}
+
+- (void)enforce {
+    if (self.faded)
+        [self fadeAnimated:NO];
 }
 
 - (void)stop {
@@ -876,47 +885,49 @@ static void JackCollectOverlays(UIView *v, NSMutableArray<UIView *> *out, int de
             [self showAnimated:YES];
         return;
     }
-    UICollectionView *cv = [self collectionView];
     if (!self.faded) {
-        // Scrolling while controls show doesn't count as using them.
-        if (CACurrentMediaTime() - self.lastActivity > kJackReelsIdle)
+        // Swiping hides them straight away; otherwise they fade after a short idle.
+        UICollectionView *cv = [self collectionView];
+        if (cv.isDragging || CACurrentMediaTime() - self.lastActivity > kJackReelsIdle)
             [self fadeAnimated:YES];
     } else {
-        // Stay full screen while scrolling: newly shown reels fade straight away.
-        [self fadeAnimated:cv.isDragging || cv.isDecelerating ? NO : YES];
+        // Stay full screen while scrolling: newly shown reels never show their controls.
+        [self fadeAnimated:NO];
     }
+}
+
+- (UIView *)tabBarView {
+    UIView *bar = self.controller.tabBarController.tabBar;
+    if (bar)
+        return bar;
+    UIViewController *tbc = self.controller;
+    while (tbc && ![NSStringFromClass([tbc class]) containsString:@"TabBarController"])
+        tbc = tbc.parentViewController;
+    id igBar = tbc ? JackGetter(tbc, @"tabBar") : nil;
+    return [igBar isKindOfClass:[UIView class]] ? igBar : nil;
 }
 
 - (NSArray<UIView *> *)targets {
     NSMutableArray<UIView *> *out = [NSMutableArray array];
-    UICollectionView *cv = [self collectionView];
-    for (UICollectionViewCell *cell in cv.visibleCells)
-        JackCollectOverlays(cell.contentView, out, 0);
-    // Tab bar: its icons fade, its blurred background stays.
-    UIView *bar = self.controller.tabBarController.tabBar;
-    if (!bar) {
-        UIViewController *tbc = self.controller;
-        while (tbc && ![NSStringFromClass([tbc class]) containsString:@"TabBarController"])
-            tbc = tbc.parentViewController;
-        id igBar = tbc ? JackGetter(tbc, @"tabBar") : nil;
-        if ([igBar isKindOfClass:[UIView class]])
-            bar = igBar;
-    }
-    id buttons = bar ? JackGetter(bar, @"buttons") : nil;
-    if ([buttons isKindOfClass:[NSArray class]]) {
-        for (id b in (NSArray *)buttons)
-            if ([b isKindOfClass:[UIView class]])
-                [out addObject:b];
-    } else if (bar) {
-        JackCollectOverlays(bar, out, 0);
-    }
+    if (self.controller.viewIfLoaded)
+        JackCollectOverlays(self.controller.view, out, 0);
+    UIView *bar = [self tabBarView];
+    if (bar)
+        [out addObject:bar];
     return out;
 }
 
 - (void)fadeAnimated:(BOOL)animated {
     NSMutableArray<UIView *> *fresh = [NSMutableArray array];
     for (UIView *v in [self targets]) {
-        if ([self.fadedViews containsObject:v] || v.alpha < 0.02 || v.hidden)
+        if ([self.fadedViews containsObject:v]) {
+            if (v.alpha > 0.02 && !animated)
+                v.alpha = 0.0; // Instagram put it back; keep it gone
+            else if (v.alpha > 0.02)
+                [fresh addObject:v];
+            continue;
+        }
+        if (v.alpha < 0.02 || v.hidden)
             continue;
         objc_setAssociatedObject(v, kJackSavedAlphaKey, @(v.alpha), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         [self.fadedViews addObject:v];
@@ -968,6 +979,36 @@ static JackReelsImmersive *JackImmersiveFor(UIViewController *vc) {
     return m;
 }
 
+static void JackEnforceImmersiveForCell(UIView *cell) {
+    for (UIResponder *r = cell.nextResponder; r; r = r.nextResponder) {
+        if ([r isKindOfClass:[UIViewController class]]) {
+            for (UIViewController *c = (UIViewController *)r; c; c = c.parentViewController) {
+                JackReelsImmersive *m = objc_getAssociatedObject(c, kJackReelsImmersiveKey);
+                if (m) {
+                    [m enforce];
+                    return;
+                }
+            }
+            return;
+        }
+    }
+}
+
+%group JackReelsCellHooks
+
+%hook UICollectionViewCell
+
+- (void)layoutSubviews {
+    %orig;
+    NSString *n = NSStringFromClass([self class]);
+    if ([n hasPrefix:@"IGSundialViewer"] && [(UIView *)self window])
+        JackEnforceImmersiveForCell((UIView *)self);
+}
+
+%end
+
+%end
+
 %group JackReelsImmersiveHooks
 
 %hook IGSundialFeedViewController
@@ -1002,6 +1043,7 @@ extern "C" void JackInstallRebornHooks(void) {
         %init(JackInterestPromptHooks);
         if (objc_getClass("IGSundialFeedViewController"))
             %init(JackReelsImmersiveHooks);
+        %init(JackReelsCellHooks);
         SPKLog(@"Jack", @"Reborn hooks header=%@", header ? NSStringFromClass(header) : @"(none)");
 
         // Badge permission (badge only; never alerts or sounds), then keep the icon current.
