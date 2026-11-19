@@ -763,6 +763,9 @@ static BOOL JackViewIsVideo(UIView *v) {
 
 // Background blur / gradient scrims stay; what sits on them still fades.
 static BOOL JackViewIsBackdrop(UIView *v) {
+    // Only full-width blurs/gradients (the bottom fade) are kept; small ones (avatar ring, button pills) fade.
+    if (v.bounds.size.width < UIScreen.mainScreen.bounds.size.width * 0.85)
+        return NO;
     if ([v isKindOfClass:[UIVisualEffectView class]] || [v.layer isKindOfClass:[CAGradientLayer class]])
         return YES;
     NSString *n = NSStringFromClass([v class]);
@@ -803,6 +806,8 @@ static void JackCollectOverlays(UIView *v, NSMutableArray<UIView *> *out, int de
             [out addObject:sub];
     }
 }
+
+static BOOL gJackReelsFaded = NO; // read by the setAlpha guard below
 
 @interface JackReelsImmersive : NSObject <UIGestureRecognizerDelegate>
 @property (nonatomic, weak) UIViewController *controller;
@@ -850,6 +855,26 @@ static void JackCollectOverlays(UIView *v, NSMutableArray<UIView *> *out, int de
 - (void)enforce {
     if (self.faded)
         [self fadeAnimated:NO];
+}
+
+// A reel cell being loaded or laid out: hide its controls right now, before it is ever drawn.
+- (void)fadeCell:(UICollectionViewCell *)cell {
+    if (!self.faded)
+        return;
+    NSMutableArray<UIView *> *out = [NSMutableArray array];
+    JackCollectOverlays(cell.contentView, out, 1);
+    for (UIView *v in out) {
+        if (![self.fadedViews containsObject:v]) {
+            if (v.hidden)
+                continue;
+            if (!objc_getAssociatedObject(v, kJackSavedAlphaKey))
+                objc_setAssociatedObject(v, kJackSavedAlphaKey, @(v.alpha), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            [self.fadedViews addObject:v];
+        }
+        [v.layer removeAnimationForKey:@"opacity"];
+        if (v.alpha > 0.0)
+            v.alpha = 0.0;
+    }
 }
 
 - (void)stop {
@@ -927,8 +952,16 @@ static void JackCollectOverlays(UIView *v, NSMutableArray<UIView *> *out, int de
                 [fresh addObject:v];
             continue;
         }
-        if (v.alpha < 0.02 || v.hidden)
+        if (v.hidden)
             continue;
+        if (v.alpha < 0.02) {
+            // Already invisible (Instagram is about to fade it in): own it anyway so it stays gone.
+            if (!animated) {
+                objc_setAssociatedObject(v, kJackSavedAlphaKey, @(v.alpha), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+                [self.fadedViews addObject:v];
+            }
+            continue;
+        }
         objc_setAssociatedObject(v, kJackSavedAlphaKey, @(v.alpha), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         [self.fadedViews addObject:v];
         [fresh addObject:v];
@@ -936,6 +969,7 @@ static void JackCollectOverlays(UIView *v, NSMutableArray<UIView *> *out, int de
     if (!self.faded && !fresh.count)
         return;
     self.faded = YES;
+    gJackReelsFaded = YES;
     if (!fresh.count)
         return;
     void (^hide)(void) = ^{
@@ -952,13 +986,14 @@ static void JackCollectOverlays(UIView *v, NSMutableArray<UIView *> *out, int de
     if (!self.faded)
         return;
     self.faded = NO;
+    gJackReelsFaded = NO;
     NSArray<UIView *> *views = self.fadedViews.allObjects;
     [self.fadedViews removeAllObjects];
     void (^restore)(void) = ^{
         for (UIView *v in views) {
             NSNumber *a = objc_getAssociatedObject(v, kJackSavedAlphaKey);
-            v.alpha = a ? a.doubleValue : 1.0;
             objc_setAssociatedObject(v, kJackSavedAlphaKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            v.alpha = a ? a.doubleValue : 1.0;
         }
     };
     if (animated)
@@ -980,12 +1015,14 @@ static JackReelsImmersive *JackImmersiveFor(UIViewController *vc) {
 }
 
 static void JackEnforceImmersiveForCell(UIView *cell) {
+    if (!gJackReelsFaded)
+        return;
     for (UIResponder *r = cell.nextResponder; r; r = r.nextResponder) {
         if ([r isKindOfClass:[UIViewController class]]) {
             for (UIViewController *c = (UIViewController *)r; c; c = c.parentViewController) {
                 JackReelsImmersive *m = objc_getAssociatedObject(c, kJackReelsImmersiveKey);
                 if (m) {
-                    [m enforce];
+                    [m fadeCell:(UICollectionViewCell *)cell];
                     return;
                 }
             }
@@ -1000,9 +1037,34 @@ static void JackEnforceImmersiveForCell(UIView *cell) {
 
 - (void)layoutSubviews {
     %orig;
-    NSString *n = NSStringFromClass([self class]);
-    if ([n hasPrefix:@"IGSundialViewer"] && [(UIView *)self window])
+    if ([NSStringFromClass([self class]) hasPrefix:@"IGSundialViewer"])
         JackEnforceImmersiveForCell((UIView *)self);
+}
+
+- (void)applyLayoutAttributes:(UICollectionViewLayoutAttributes *)attrs {
+    %orig;
+    if ([NSStringFromClass([self class]) hasPrefix:@"IGSundialViewer"])
+        JackEnforceImmersiveForCell((UIView *)self);
+}
+
+- (void)didMoveToWindow {
+    %orig;
+    if ([NSStringFromClass([self class]) hasPrefix:@"IGSundialViewer"] && [(UIView *)self window])
+        JackEnforceImmersiveForCell((UIView *)self);
+}
+
+%end
+
+// While full screen, Instagram fading a hidden control back in is ignored.
+%hook UIView
+
+- (void)setAlpha:(CGFloat)alpha {
+    if (gJackReelsFaded && objc_getAssociatedObject(self, kJackSavedAlphaKey)) {
+        // Remember what Instagram wanted, so a tap restores exactly that; keep it hidden for now.
+        objc_setAssociatedObject(self, kJackSavedAlphaKey, @(alpha), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        alpha = 0.0;
+    }
+    %orig(alpha);
 }
 
 %end
