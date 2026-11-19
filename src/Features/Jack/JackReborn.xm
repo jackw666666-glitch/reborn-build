@@ -834,6 +834,8 @@ static void JackZeroAlpha(UIView *v) {
 @property (nonatomic, strong) UIButton *rewindButton;
 @property (nonatomic, strong) UIButton *repeatButton;
 @property (nonatomic, strong) UIButton *nextButton;
+@property (nonatomic, weak) UIView *ufiCell;
+@property (nonatomic, weak) UIView *ufiView;
 @property (nonatomic, strong) UIButton *muteButton;
 @end
 
@@ -960,7 +962,12 @@ static BOOL JackReelsMuted(void) {
     else if (root.subviews.lastObject != self.bar)
         [root bringSubviewToFront:self.bar];
     UICollectionViewCell *cell = [self currentCell];
-    UIView *ufi = [self ufiInCell:cell];
+    // Look the like column up once per reel, not on every 0.1 s tick.
+    if (self.ufiCell != cell || !self.ufiView) {
+        self.ufiCell = cell;
+        self.ufiView = [self ufiInCell:cell];
+    }
+    UIView *ufi = self.ufiView;
     CGRect u = ufi && ufi.window ? [ufi convertRect:ufi.bounds toView:root] : CGRectNull;
     CGFloat cx = CGRectIsNull(u) ? root.bounds.size.width - 36 : CGRectGetMidX(u);
     CGFloat bottom = CGRectIsNull(u) ? root.bounds.size.height * 0.5 : CGRectGetMinY(u) - 8;
@@ -1112,11 +1119,12 @@ static BOOL JackReelsMuted(void) {
 
 - (void)revealTap {
     self.lastActivity = CACurrentMediaTime();
-    // The middle of the reel pauses / plays; anywhere else toggles the controls.
+    // Full screen: any tap brings the controls back straight away.
+    // Controls on: the middle of the reel pauses / plays; anywhere else hides them.
     UIView *root = self.controller.view;
     CGPoint p = [self.tap locationInView:root];
     CGSize sz = root.bounds.size;
-    if (p.x > sz.width * 0.25 && p.x < sz.width * 0.75 && p.y > sz.height * 0.3 && p.y < sz.height * 0.7) {
+    if (!self.faded && p.x > sz.width * 0.3 && p.x < sz.width * 0.7 && p.y > sz.height * 0.35 && p.y < sz.height * 0.65) {
         UICollectionViewCell *cell = [self currentCell];
         if (cell)
             JackReelsTargetForCell(cell).togglePlayback();
