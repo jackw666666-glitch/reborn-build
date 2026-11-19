@@ -751,7 +751,6 @@ static void JackHideInterestPrompt(UILabel *label) {
 // stay away while scrolling. First tap brings them back (and is swallowed, so it doesn't pause);
 // a tap while they're showing pauses as normal. Blurs and gradients along the bottom are kept.
 // Purely visual.
-static const NSTimeInterval kJackReelsIdle = 2.5;
 static const void *kJackReelsImmersiveKey = &kJackReelsImmersiveKey;
 static const void *kJackSavedAlphaKey = &kJackSavedAlphaKey;
 
@@ -883,9 +882,9 @@ static BOOL gJackReelsFaded = NO; // read by the setAlpha guard below
     [self showAnimated:NO];
 }
 
-// Only claims a tap while faded; then Instagram's own taps (pause, mute) wait for it and lose.
+// Tap toggles the controls on/off (Instagram's own taps wait for it and lose); hold still pauses.
 - (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)g {
-    return self.faded;
+    return YES;
 }
 
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)g shouldBeRequiredToFailByGestureRecognizer:(UIGestureRecognizer *)other {
@@ -894,7 +893,10 @@ static BOOL gJackReelsFaded = NO; // read by the setAlpha guard below
 
 - (void)revealTap {
     self.lastActivity = CACurrentMediaTime();
-    [self showAnimated:YES];
+    if (self.faded)
+        [self showAnimated:YES];
+    else
+        [self fadeAnimated:YES];
 }
 
 - (void)tick {
@@ -911,10 +913,7 @@ static BOOL gJackReelsFaded = NO; // read by the setAlpha guard below
         return;
     }
     if (!self.faded) {
-        // Swiping hides them straight away; otherwise they fade after a short idle.
-        UICollectionView *cv = [self collectionView];
-        if (cv.isDragging || CACurrentMediaTime() - self.lastActivity > kJackReelsIdle)
-            [self fadeAnimated:YES];
+        // Controls stay on (across swipes) until the next tap.
     } else {
         // Stay full screen while scrolling: newly shown reels never show their controls.
         [self fadeAnimated:NO];
