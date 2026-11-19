@@ -958,6 +958,12 @@ static BOOL JackReelsMuted(void) {
     CGRect u = ufi && ufi.window ? [ufi convertRect:ufi.bounds toView:root] : CGRectNull;
     CGFloat cx = CGRectIsNull(u) ? root.bounds.size.width - 36 : CGRectGetMidX(u);
     CGFloat bottom = CGRectIsNull(u) ? root.bounds.size.height * 0.5 : CGRectGetMinY(u) - 8;
+    // Sparkle's own reel button (and speed badge) sit above the like column: stay above them too.
+    for (NSNumber *tag in @[ @921342, @926012 ]) {
+        UIView *extra = cell ? [cell viewWithTag:tag.integerValue] : nil;
+        if (extra && extra.window && !extra.hidden)
+            bottom = MIN(bottom, CGRectGetMinY([extra convertRect:extra.bounds toView:root]) - 8);
+    }
     self.bar.center = CGPointMake(cx, bottom - self.bar.bounds.size.height / 2);
     BOOL playing = cell ? JackReelsTargetForCell(cell).isPlaying() : NO;
     [self setSymbol:(playing ? @"pause.fill" : @"play.fill") on:self.playButton size:26];
