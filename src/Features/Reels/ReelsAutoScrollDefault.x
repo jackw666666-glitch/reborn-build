@@ -15,9 +15,12 @@ NSString *SPKReelsAutoScrollEffectiveMode(void) {
     return [SPKUtils getStringPref:@"reels_auto_scroll_default"] ?: @"default";
 }
 
+static __weak id sJackAutoScrollController = nil;
+
 static void SPKApplyReelsAutoScrollDefault(id controller) {
     if (!controller)
         return;
+    sJackAutoScrollController = controller;
 
     NSString *mode = SPKReelsAutoScrollEffectiveMode();
     BOOL enable;
@@ -75,4 +78,14 @@ void SPKInstallReelsAutoScrollDefaultHooksIfEnabled(void) {
         }
         %init(SPKReelsAutoScrollDefaultHooks, _TtC19IGSundialAutoScroll19IGSundialAutoScroll = autoScrollClass);
     });
+}
+
+// Jack build: the full-screen reels "auto next" button flips Instagram's own auto scroll.
+id JackReelsAutoScrollController(void) {
+    return sJackAutoScrollController;
+}
+
+BOOL JackReelsAutoScrollOn(void) {
+    id c = sJackAutoScrollController;
+    return [c respondsToSelector:@selector(isEnabled)] && [c isEnabled];
 }

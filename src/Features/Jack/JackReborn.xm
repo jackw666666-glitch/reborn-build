@@ -18,6 +18,8 @@
 #import "../../Shared/Playback/SPKPlaybackPanel.h"
 
 extern "C" SPKPlaybackTarget *JackReelsTargetForCell(UICollectionViewCell *cell);
+extern "C" id JackReelsAutoScrollController(void);
+extern "C" BOOL JackReelsAutoScrollOn(void);
 static const NSInteger kJackReelsBarTag = 0x4A4342;
 
 static const void *kJackRebornLabelKey = &kJackRebornLabelKey;
@@ -830,6 +832,8 @@ static void JackZeroAlpha(UIView *v) {
 @property (nonatomic, strong) UIButton *playButton;
 @property (nonatomic, strong) UIButton *skipButton;
 @property (nonatomic, strong) UIButton *rewindButton;
+@property (nonatomic, strong) UIButton *repeatButton;
+@property (nonatomic, strong) UIButton *nextButton;
 @property (nonatomic, strong) UIButton *muteButton;
 @end
 
@@ -866,15 +870,17 @@ static void JackZeroAlpha(UIView *v) {
 - (UIView *)buildBar {
     if (self.bar)
         return self.bar;
-    CGFloat step = 56;
-    UIView *bar = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 48, step * 4)];
+    CGFloat step = 52;
+    UIView *bar = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 48, step * 6)];
     bar.tag = kJackReelsBarTag;
     bar.alpha = 0.0;
     self.playButton = [self iconButton:@selector(playTapped)];
     self.rewindButton = [self iconButton:@selector(rewindTapped)];
     self.skipButton = [self iconButton:@selector(skipTapped)];
+    self.repeatButton = [self iconButton:@selector(repeatTapped)];
+    self.nextButton = [self iconButton:@selector(nextTapped)];
     self.muteButton = [self iconButton:@selector(muteTapped)];
-    NSArray<UIButton *> *order = @[ self.playButton, self.rewindButton, self.skipButton, self.muteButton ];
+    NSArray<UIButton *> *order = @[ self.playButton, self.rewindButton, self.skipButton, self.repeatButton, self.nextButton, self.muteButton ];
     for (NSUInteger i = 0; i < order.count; i++) {
         order[i].center = CGPointMake(24, step * i + step / 2);
         [bar addSubview:order[i]];
@@ -968,6 +974,13 @@ static BOOL JackReelsMuted(void) {
     BOOL playing = cell ? JackReelsTargetForCell(cell).isPlaying() : NO;
     [self setSymbol:(playing ? @"pause.fill" : @"play.fill") on:self.playButton size:26];
     [self setSymbol:(JackReelsMuted() ? @"speaker.slash.fill" : @"speaker.wave.2.fill") on:self.muteButton size:22];
+    // Off = dimmed icon.
+    BOOL repeatOn = ![[NSUserDefaults standardUserDefaults] boolForKey:@"reels_stop_looping"];
+    [self setSymbol:@"repeat" on:self.repeatButton size:22];
+    self.repeatButton.alpha = repeatOn ? 1.0 : 0.4;
+    [self setSymbol:@"forward.end.fill" on:self.nextButton size:22];
+    self.nextButton.alpha = JackReelsAutoScrollOn() ? 1.0 : 0.4;
+    self.nextButton.hidden = JackReelsAutoScrollController() == nil;
 }
 
 - (void)playTapped {
@@ -978,6 +991,22 @@ static BOOL JackReelsMuted(void) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [self refreshBar];
     });
+}
+
+- (void)repeatTapped {
+    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+    [d setBool:![d boolForKey:@"reels_stop_looping"] forKey:@"reels_stop_looping"];
+    [self refreshBar];
+}
+
+- (void)nextTapped {
+    id c = JackReelsAutoScrollController();
+    BOOL on = !JackReelsAutoScrollOn();
+    if ([c respondsToSelector:@selector(setUserEnabled:)])
+        ((void (*)(id, SEL, BOOL))objc_msgSend)(c, @selector(setUserEnabled:), on);
+    else if ([c respondsToSelector:@selector(setIsEnabled:)])
+        ((void (*)(id, SEL, BOOL))objc_msgSend)(c, @selector(setIsEnabled:), on);
+    [self refreshBar];
 }
 
 - (void)rewindTapped {
@@ -1083,6 +1112,19 @@ static BOOL JackReelsMuted(void) {
 
 - (void)revealTap {
     self.lastActivity = CACurrentMediaTime();
+    // The middle of the reel pauses / plays; anywhere else toggles the controls.
+    UIView *root = self.controller.view;
+    CGPoint p = [self.tap locationInView:root];
+    CGSize sz = root.bounds.size;
+    if (p.x > sz.width * 0.25 && p.x < sz.width * 0.75 && p.y > sz.height * 0.3 && p.y < sz.height * 0.7) {
+        UICollectionViewCell *cell = [self currentCell];
+        if (cell)
+            JackReelsTargetForCell(cell).togglePlayback();
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [self refreshBar];
+        });
+        return;
+    }
     if (self.faded)
         [self showAnimated:YES];
     else

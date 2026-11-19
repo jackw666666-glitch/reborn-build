@@ -39,8 +39,10 @@ static NSInteger sSPKReelsStopLoopingObservedTapPauses = -1;
 
 // Auto Scroll in force wins: an ended reel has to keep going for Instagram to
 // advance, so the saved Stop Looping choice is left alone but not acted on.
+extern "C" BOOL JackReelsAutoScrollOn(void);
+
 static BOOL SPKReelsStopLoopingEnabled(void) {
-    if ([SPKReelsAutoScrollEffectiveMode() isEqualToString:@"on"])
+    if ([SPKReelsAutoScrollEffectiveMode() isEqualToString:@"on"] || JackReelsAutoScrollOn())
         return NO;
     return [SPKUtils getBoolPref:kSPKReelsStopLoopingPrefKey];
 }
