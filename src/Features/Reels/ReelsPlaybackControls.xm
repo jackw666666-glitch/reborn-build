@@ -679,3 +679,8 @@ extern "C" void SPKInstallReelsPlaybackControlsHooksIfEnabled(void) {
         }
     });
 }
+
+// Jack build: the full-screen reels buttons (play/pause, skip) drive the reel through this.
+extern "C" SPKPlaybackTarget *JackReelsTargetForCell(UICollectionViewCell *cell) {
+    return SPKReelsPlaybackTargetForCell(cell);
+}

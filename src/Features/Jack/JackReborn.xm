@@ -15,6 +15,10 @@
 #import <UserNotifications/UserNotifications.h>
 #import <objc/runtime.h>
 #import <objc/message.h>
+#import "../../Shared/Playback/SPKPlaybackPanel.h"
+
+extern "C" SPKPlaybackTarget *JackReelsTargetForCell(UICollectionViewCell *cell);
+static const NSInteger kJackReelsBarTag = 0x4A4342;
 
 static const void *kJackRebornLabelKey = &kJackRebornLabelKey;
 static const void *kJackGradientMarkKey = &kJackGradientMarkKey;
@@ -784,7 +788,7 @@ static BOOL JackContainsKeep(UIView *v, int depth) {
 
 static void JackCollectOverlays(UIView *v, NSMutableArray<UIView *> *out, int depth) {
     for (UIView *sub in v.subviews) {
-        if (sub.hidden)
+        if (sub.hidden || sub.tag == kJackReelsBarTag)
             continue;
         if ([sub isKindOfClass:[UICollectionView class]]) {
             for (UICollectionViewCell *cell in ((UICollectionView *)sub).visibleCells)
@@ -815,6 +819,10 @@ static BOOL gJackReelsFaded = NO; // read by the setAlpha guard below
 @property (nonatomic, assign) BOOL faded;
 @property (nonatomic, strong) NSHashTable<UIView *> *fadedViews;
 @property (nonatomic, strong) UITapGestureRecognizer *tap;
+@property (nonatomic, strong) UIView *bar;
+@property (nonatomic, strong) UIButton *playButton;
+@property (nonatomic, strong) UIButton *skipButton;
+@property (nonatomic, strong) UIButton *muteButton;
 @end
 
 @implementation JackReelsImmersive
@@ -829,6 +837,145 @@ static BOOL gJackReelsFaded = NO; // read by the setAlpha guard below
         [stack addObjectsFromArray:v.subviews];
     }
     return nil;
+}
+
+// MARK: Play / skip / mute buttons (shown only with the controls)
+
+- (UIButton *)roundButton:(CGFloat)size action:(SEL)action {
+    UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
+    b.frame = CGRectMake(0, 0, size, size);
+    b.tintColor = UIColor.whiteColor;
+    b.layer.cornerRadius = size / 2;
+    b.clipsToBounds = YES;
+    UIVisualEffectView *glass = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialDark]];
+    glass.frame = b.bounds;
+    glass.userInteractionEnabled = NO;
+    [b insertSubview:glass atIndex:0];
+    [b addTarget:self action:action forControlEvents:UIControlEventTouchUpInside];
+    return b;
+}
+
+- (UIView *)buildBar {
+    if (self.bar)
+        return self.bar;
+    CGFloat small = 52, big = 66, gap = 30;
+    UIView *bar = [[UIView alloc] initWithFrame:CGRectMake(0, 0, small * 2 + big + gap * 2, big)];
+    bar.tag = kJackReelsBarTag;
+    bar.alpha = 0.0;
+    self.muteButton = [self roundButton:small action:@selector(muteTapped)];
+    self.playButton = [self roundButton:big action:@selector(playTapped)];
+    self.skipButton = [self roundButton:small action:@selector(skipTapped)];
+    self.muteButton.center = CGPointMake(small / 2, big / 2);
+    self.playButton.center = CGPointMake(small + gap + big / 2, big / 2);
+    self.skipButton.center = CGPointMake(bar.bounds.size.width - small / 2, big / 2);
+    [bar addSubview:self.muteButton];
+    [bar addSubview:self.playButton];
+    [bar addSubview:self.skipButton];
+    [self setSymbol:@"goforward.10" on:self.skipButton size:22];
+    self.bar = bar;
+    return bar;
+}
+
+- (void)setSymbol:(NSString *)name on:(UIButton *)b size:(CGFloat)pt {
+    if ([objc_getAssociatedObject(b, @selector(setSymbol:on:size:)) isEqualToString:name])
+        return;
+    objc_setAssociatedObject(b, @selector(setSymbol:on:size:), name, OBJC_ASSOCIATION_COPY_NONATOMIC);
+    UIImageSymbolConfiguration *cfg = [UIImageSymbolConfiguration configurationWithPointSize:pt weight:UIImageSymbolWeightSemibold];
+    [b setImage:[UIImage systemImageNamed:name withConfiguration:cfg] forState:UIControlStateNormal];
+}
+
+- (UICollectionViewCell *)currentCell {
+    UICollectionView *cv = [self collectionView];
+    Class videoCell = NSClassFromString(@"IGSundialViewerVideoCell");
+    if (!cv || !videoCell)
+        return nil;
+    CGFloat mid = cv.contentOffset.y + cv.bounds.size.height / 2;
+    UICollectionViewCell *best = nil;
+    CGFloat bestDist = CGFLOAT_MAX;
+    for (UICollectionViewCell *c in cv.visibleCells) {
+        if (![c isKindOfClass:videoCell])
+            continue;
+        CGFloat d = fabs(CGRectGetMidY(c.frame) - mid);
+        if (d < bestDist) {
+            bestDist = d;
+            best = c;
+        }
+    }
+    return best;
+}
+
+static id JackAudioAnnouncer(void) {
+    Class cls = NSClassFromString(@"IGAudioStatusAnnouncer");
+    SEL shared = NSSelectorFromString(@"sharedInstance");
+    return [cls respondsToSelector:shared] ? ((id (*)(id, SEL))objc_msgSend)(cls, shared) : nil;
+}
+
+static long long *JackStickySoundSlot(id announcer) {
+    Ivar ivar = announcer ? class_getInstanceVariable([announcer class], "_stickySoundState") : NULL;
+    return ivar ? (long long *)((uint8_t *)(__bridge void *)announcer + ivar_getOffset(ivar)) : NULL;
+}
+
+static BOOL JackReelsMuted(void) {
+    long long *slot = JackStickySoundSlot(JackAudioAnnouncer());
+    return !slot || *slot != 2; // 2 = user unmuted; unset starts muted (locked setting)
+}
+
+- (void)refreshBar {
+    if (!self.bar)
+        return;
+    UIView *root = self.controller.view;
+    if (self.bar.superview != root)
+        [root addSubview:self.bar];
+    else if (root.subviews.lastObject != self.bar)
+        [root bringSubviewToFront:self.bar];
+    self.bar.center = CGPointMake(CGRectGetMidX(root.bounds), CGRectGetMidY(root.bounds));
+    UICollectionViewCell *cell = [self currentCell];
+    BOOL playing = cell ? JackReelsTargetForCell(cell).isPlaying() : NO;
+    [self setSymbol:(playing ? @"pause.fill" : @"play.fill") on:self.playButton size:28];
+    [self setSymbol:(JackReelsMuted() ? @"speaker.slash.fill" : @"speaker.wave.2.fill") on:self.muteButton size:20];
+}
+
+- (void)playTapped {
+    UICollectionViewCell *cell = [self currentCell];
+    if (!cell)
+        return;
+    JackReelsTargetForCell(cell).togglePlayback();
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [self refreshBar];
+    });
+}
+
+- (void)skipTapped {
+    UICollectionViewCell *cell = [self currentCell];
+    if (!cell)
+        return;
+    SPKPlaybackTarget *t = JackReelsTargetForCell(cell);
+    double d = t.duration(), now = t.currentTime();
+    if (d <= 1.0)
+        return;
+    BOOL wasPlaying = t.isPlaying();
+    t.seek(MIN(now + 10.0, d - 0.3), ^{
+        if (wasPlaying && !t.isPlaying() && t.resumeAfterSeek)
+            t.resumeAfterSeek();
+    });
+}
+
+- (void)muteTapped {
+    id announcer = JackAudioAnnouncer();
+    long long next = JackReelsMuted() ? 2 : 1;
+    SEL setter = NSSelectorFromString(@"setStickySoundState:forReason:");
+    if ([announcer respondsToSelector:setter]) {
+        ((void (*)(id, SEL, long long, long long))objc_msgSend)(announcer, setter, next, 5);
+    } else {
+        long long *slot = JackStickySoundSlot(announcer);
+        if (slot)
+            *slot = next;
+    }
+    [self refreshBar];
+}
+
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)g shouldReceiveTouch:(UITouch *)touch {
+    return !(self.bar && [touch.view isDescendantOfView:self.bar]);
 }
 
 - (void)start {
@@ -914,6 +1061,10 @@ static BOOL gJackReelsFaded = NO; // read by the setAlpha guard below
     }
     if (!self.faded) {
         // Controls stay on (across swipes) until the next tap.
+        [self buildBar];
+        [self refreshBar];
+        if (self.bar.alpha < 0.01)
+            [UIView animateWithDuration:0.25 animations:^{ self.bar.alpha = 1.0; }];
     } else {
         // Stay full screen while scrolling: newly shown reels never show their controls.
         [self fadeAnimated:NO];
@@ -942,6 +1093,12 @@ static BOOL gJackReelsFaded = NO; // read by the setAlpha guard below
 }
 
 - (void)fadeAnimated:(BOOL)animated {
+    if (self.bar.alpha > 0.0) {
+        if (animated)
+            [UIView animateWithDuration:0.25 animations:^{ self.bar.alpha = 0.0; }];
+        else
+            self.bar.alpha = 0.0;
+    }
     NSMutableArray<UIView *> *fresh = [NSMutableArray array];
     for (UIView *v in [self targets]) {
         if ([self.fadedViews containsObject:v]) {
@@ -984,6 +1141,14 @@ static BOOL gJackReelsFaded = NO; // read by the setAlpha guard below
 - (void)showAnimated:(BOOL)animated {
     if (!self.faded)
         return;
+    if (!self.controller.presentedViewController) {
+        [self buildBar];
+        [self refreshBar];
+        if (animated)
+            [UIView animateWithDuration:0.25 animations:^{ self.bar.alpha = 1.0; }];
+        else
+            self.bar.alpha = 1.0;
+    }
     self.faded = NO;
     gJackReelsFaded = NO;
     NSArray<UIView *> *views = self.fadedViews.allObjects;
