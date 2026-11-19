@@ -811,6 +811,13 @@ static void JackCollectOverlays(UIView *v, NSMutableArray<UIView *> *out, int de
 }
 
 static BOOL gJackReelsFaded = NO; // read by the setAlpha guard below
+static BOOL gJackOwnAlphaWrite = NO; // our own hiding writes must not overwrite the saved alpha
+
+static void JackZeroAlpha(UIView *v) {
+    gJackOwnAlphaWrite = YES;
+    v.alpha = 0.0;
+    gJackOwnAlphaWrite = NO;
+}
 
 @interface JackReelsImmersive : NSObject <UIGestureRecognizerDelegate>
 @property (nonatomic, weak) UIViewController *controller;
@@ -1019,7 +1026,7 @@ static BOOL JackReelsMuted(void) {
         }
         [v.layer removeAnimationForKey:@"opacity"];
         if (v.alpha > 0.0)
-            v.alpha = 0.0;
+            JackZeroAlpha(v);
     }
 }
 
@@ -1103,7 +1110,7 @@ static BOOL JackReelsMuted(void) {
     for (UIView *v in [self targets]) {
         if ([self.fadedViews containsObject:v]) {
             if (v.alpha > 0.02 && !animated)
-                v.alpha = 0.0; // Instagram put it back; keep it gone
+                JackZeroAlpha(v); // Instagram put it back; keep it gone
             else if (v.alpha > 0.02)
                 [fresh addObject:v];
             continue;
@@ -1130,7 +1137,7 @@ static BOOL JackReelsMuted(void) {
         return;
     void (^hide)(void) = ^{
         for (UIView *v in fresh)
-            v.alpha = 0.0;
+            JackZeroAlpha(v);
     };
     if (animated)
         [UIView animateWithDuration:0.6 delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:hide completion:nil];
@@ -1223,7 +1230,7 @@ static void JackEnforceImmersiveForCell(UIView *cell) {
 %hook UIView
 
 - (void)setAlpha:(CGFloat)alpha {
-    if (gJackReelsFaded && objc_getAssociatedObject(self, kJackSavedAlphaKey)) {
+    if (gJackReelsFaded && !gJackOwnAlphaWrite && objc_getAssociatedObject(self, kJackSavedAlphaKey)) {
         // Remember what Instagram wanted, so a tap restores exactly that; keep it hidden for now.
         objc_setAssociatedObject(self, kJackSavedAlphaKey, @(alpha), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         alpha = 0.0;
