@@ -829,6 +829,7 @@ static void JackZeroAlpha(UIView *v) {
 @property (nonatomic, strong) UIView *bar;
 @property (nonatomic, strong) UIButton *playButton;
 @property (nonatomic, strong) UIButton *skipButton;
+@property (nonatomic, strong) UIButton *rewindButton;
 @property (nonatomic, strong) UIButton *muteButton;
 @end
 
@@ -848,39 +849,55 @@ static void JackZeroAlpha(UIView *v) {
 
 // MARK: Play / skip / mute buttons (shown only with the controls)
 
-- (UIButton *)roundButton:(CGFloat)size action:(SEL)action {
-    UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
-    b.frame = CGRectMake(0, 0, size, size);
+- (UIButton *)iconButton:(SEL)action {
+    UIButton *b = [UIButton buttonWithType:UIButtonTypeCustom];
+    b.frame = CGRectMake(0, 0, 48, 48);
     b.tintColor = UIColor.whiteColor;
-    b.layer.cornerRadius = size / 2;
-    b.clipsToBounds = YES;
-    UIVisualEffectView *glass = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialDark]];
-    glass.frame = b.bounds;
-    glass.userInteractionEnabled = NO;
-    [b insertSubview:glass atIndex:0];
+    // Same soft drop shadow as Instagram's own reel icons, so white stays visible on bright video.
+    b.layer.shadowColor = UIColor.blackColor.CGColor;
+    b.layer.shadowOpacity = 0.35;
+    b.layer.shadowRadius = 3;
+    b.layer.shadowOffset = CGSizeZero;
     [b addTarget:self action:action forControlEvents:UIControlEventTouchUpInside];
     return b;
 }
 
+// White icons in a column on the right, above Instagram's like/comment/share column.
 - (UIView *)buildBar {
     if (self.bar)
         return self.bar;
-    CGFloat small = 52, big = 66, gap = 30;
-    UIView *bar = [[UIView alloc] initWithFrame:CGRectMake(0, 0, small * 2 + big + gap * 2, big)];
+    CGFloat step = 56;
+    UIView *bar = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 48, step * 4)];
     bar.tag = kJackReelsBarTag;
     bar.alpha = 0.0;
-    self.muteButton = [self roundButton:small action:@selector(muteTapped)];
-    self.playButton = [self roundButton:big action:@selector(playTapped)];
-    self.skipButton = [self roundButton:small action:@selector(skipTapped)];
-    self.muteButton.center = CGPointMake(small / 2, big / 2);
-    self.playButton.center = CGPointMake(small + gap + big / 2, big / 2);
-    self.skipButton.center = CGPointMake(bar.bounds.size.width - small / 2, big / 2);
-    [bar addSubview:self.muteButton];
-    [bar addSubview:self.playButton];
-    [bar addSubview:self.skipButton];
-    [self setSymbol:@"goforward.10" on:self.skipButton size:22];
+    self.playButton = [self iconButton:@selector(playTapped)];
+    self.rewindButton = [self iconButton:@selector(rewindTapped)];
+    self.skipButton = [self iconButton:@selector(skipTapped)];
+    self.muteButton = [self iconButton:@selector(muteTapped)];
+    NSArray<UIButton *> *order = @[ self.playButton, self.rewindButton, self.skipButton, self.muteButton ];
+    for (NSUInteger i = 0; i < order.count; i++) {
+        order[i].center = CGPointMake(24, step * i + step / 2);
+        [bar addSubview:order[i]];
+    }
+    [self setSymbol:@"gobackward.10" on:self.rewindButton size:24];
+    [self setSymbol:@"goforward.10" on:self.skipButton size:24];
     self.bar = bar;
     return bar;
+}
+
+- (UIView *)ufiInCell:(UIView *)cell {
+    Class ufi = SPKReelsVerticalUFIClass();
+    if (!ufi || !cell)
+        return nil;
+    NSMutableArray<UIView *> *stack = [NSMutableArray arrayWithObject:cell];
+    for (int n = 0; stack.count && n < 400; n++) {
+        UIView *v = stack.firstObject;
+        [stack removeObjectAtIndex:0];
+        if ([v isKindOfClass:ufi])
+            return v;
+        [stack addObjectsFromArray:v.subviews];
+    }
+    return nil;
 }
 
 - (void)setSymbol:(NSString *)name on:(UIButton *)b size:(CGFloat)pt {
@@ -888,7 +905,8 @@ static void JackZeroAlpha(UIView *v) {
         return;
     objc_setAssociatedObject(b, @selector(setSymbol:on:size:), name, OBJC_ASSOCIATION_COPY_NONATOMIC);
     UIImageSymbolConfiguration *cfg = [UIImageSymbolConfiguration configurationWithPointSize:pt weight:UIImageSymbolWeightSemibold];
-    [b setImage:[UIImage systemImageNamed:name withConfiguration:cfg] forState:UIControlStateNormal];
+    UIImage *img = [[UIImage systemImageNamed:name withConfiguration:cfg] imageWithTintColor:UIColor.whiteColor renderingMode:UIImageRenderingModeAlwaysOriginal];
+    [b setImage:img forState:UIControlStateNormal];
 }
 
 - (UICollectionViewCell *)currentCell {
@@ -935,11 +953,15 @@ static BOOL JackReelsMuted(void) {
         [root addSubview:self.bar];
     else if (root.subviews.lastObject != self.bar)
         [root bringSubviewToFront:self.bar];
-    self.bar.center = CGPointMake(CGRectGetMidX(root.bounds), CGRectGetMidY(root.bounds));
     UICollectionViewCell *cell = [self currentCell];
+    UIView *ufi = [self ufiInCell:cell];
+    CGRect u = ufi && ufi.window ? [ufi convertRect:ufi.bounds toView:root] : CGRectNull;
+    CGFloat cx = CGRectIsNull(u) ? root.bounds.size.width - 36 : CGRectGetMidX(u);
+    CGFloat bottom = CGRectIsNull(u) ? root.bounds.size.height * 0.5 : CGRectGetMinY(u) - 8;
+    self.bar.center = CGPointMake(cx, bottom - self.bar.bounds.size.height / 2);
     BOOL playing = cell ? JackReelsTargetForCell(cell).isPlaying() : NO;
-    [self setSymbol:(playing ? @"pause.fill" : @"play.fill") on:self.playButton size:28];
-    [self setSymbol:(JackReelsMuted() ? @"speaker.slash.fill" : @"speaker.wave.2.fill") on:self.muteButton size:20];
+    [self setSymbol:(playing ? @"pause.fill" : @"play.fill") on:self.playButton size:26];
+    [self setSymbol:(JackReelsMuted() ? @"speaker.slash.fill" : @"speaker.wave.2.fill") on:self.muteButton size:22];
 }
 
 - (void)playTapped {
@@ -952,7 +974,15 @@ static BOOL JackReelsMuted(void) {
     });
 }
 
+- (void)rewindTapped {
+    [self jumpBy:-10.0];
+}
+
 - (void)skipTapped {
+    [self jumpBy:10.0];
+}
+
+- (void)jumpBy:(double)delta {
     UICollectionViewCell *cell = [self currentCell];
     if (!cell)
         return;
@@ -961,7 +991,7 @@ static BOOL JackReelsMuted(void) {
     if (d <= 1.0)
         return;
     BOOL wasPlaying = t.isPlaying();
-    t.seek(MIN(now + 10.0, d - 0.3), ^{
+    t.seek(MAX(0.0, MIN(now + delta, d - 0.3)), ^{
         if (wasPlaying && !t.isPlaying() && t.resumeAfterSeek)
             t.resumeAfterSeek();
     });
