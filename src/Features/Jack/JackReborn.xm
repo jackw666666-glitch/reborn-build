@@ -832,8 +832,7 @@ static void JackZeroAlpha(UIView *v) {
 @property (nonatomic, strong) UIButton *playButton;
 @property (nonatomic, strong) UIButton *skipButton;
 @property (nonatomic, strong) UIButton *rewindButton;
-@property (nonatomic, strong) UIButton *repeatButton;
-@property (nonatomic, strong) UIButton *nextButton;
+@property (nonatomic, strong) UIButton *endButton; // one toggle: repeat the reel, or go to the next one
 @property (nonatomic, weak) UIView *ufiCell;
 @property (nonatomic, weak) UIView *ufiView;
 @property (nonatomic, strong) UIButton *muteButton;
@@ -873,16 +872,15 @@ static void JackZeroAlpha(UIView *v) {
     if (self.bar)
         return self.bar;
     CGFloat step = 52;
-    UIView *bar = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 48, step * 6)];
+    UIView *bar = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 48, step * 5)];
     bar.tag = kJackReelsBarTag;
     bar.alpha = 0.0;
     self.playButton = [self iconButton:@selector(playTapped)];
     self.rewindButton = [self iconButton:@selector(rewindTapped)];
     self.skipButton = [self iconButton:@selector(skipTapped)];
-    self.repeatButton = [self iconButton:@selector(repeatTapped)];
-    self.nextButton = [self iconButton:@selector(nextTapped)];
+    self.endButton = [self iconButton:@selector(endTapped)];
     self.muteButton = [self iconButton:@selector(muteTapped)];
-    NSArray<UIButton *> *order = @[ self.playButton, self.rewindButton, self.skipButton, self.repeatButton, self.nextButton, self.muteButton ];
+    NSArray<UIButton *> *order = @[ self.playButton, self.rewindButton, self.skipButton, self.endButton, self.muteButton ];
     for (NSUInteger i = 0; i < order.count; i++) {
         order[i].center = CGPointMake(24, step * i + step / 2);
         [bar addSubview:order[i]];
@@ -982,13 +980,9 @@ static BOOL JackReelsMuted(void) {
     BOOL playing = cell ? JackReelsTargetForCell(cell).isPlaying() : NO;
     [self setSymbol:(playing ? @"pause.fill" : @"play.fill") on:self.playButton size:26];
     [self setSymbol:(JackReelsMuted() ? @"speaker.slash.fill" : @"speaker.wave.2.fill") on:self.muteButton size:22];
-    // Off = dimmed icon.
-    BOOL repeatOn = ![[NSUserDefaults standardUserDefaults] boolForKey:@"reels_stop_looping"];
-    [self setSymbol:@"repeat" on:self.repeatButton size:22];
-    self.repeatButton.alpha = repeatOn ? 1.0 : 0.4;
-    [self setSymbol:@"forward.end.fill" on:self.nextButton size:22];
-    self.nextButton.alpha = JackReelsAutoScrollOn() ? 1.0 : 0.4;
-    self.nextButton.hidden = JackReelsAutoScrollController() == nil;
+    // Repeat icon = the reel loops; next icon = it moves on by itself when it ends.
+    [self setSymbol:(JackReelsAutoScrollOn() ? @"forward.end.fill" : @"repeat") on:self.endButton size:22];
+    self.endButton.hidden = JackReelsAutoScrollController() == nil;
 }
 
 - (void)playTapped {
@@ -1001,13 +995,9 @@ static BOOL JackReelsMuted(void) {
     });
 }
 
-- (void)repeatTapped {
-    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
-    [d setBool:![d boolForKey:@"reels_stop_looping"] forKey:@"reels_stop_looping"];
-    [self refreshBar];
-}
-
-- (void)nextTapped {
+- (void)endTapped {
+    // Looping is Instagram's normal behaviour; clear any old "stop at end" choice from the earlier button.
+    [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"reels_stop_looping"];
     id c = JackReelsAutoScrollController();
     BOOL on = !JackReelsAutoScrollOn();
     if ([c respondsToSelector:@selector(setUserEnabled:)])
