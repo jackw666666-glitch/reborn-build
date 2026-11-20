@@ -1318,12 +1318,39 @@ static void JackEnforceImmersiveForCell(UIView *cell) {
 
 %end
 
+// Reels: no like button (and its count) in the right-hand column.
+%group JackReelsHideLikeHooks
+%hook JackReelsUFI
+- (void)layoutSubviews {
+    %orig;
+    SEL sel = NSSelectorFromString(@"ufiLikeButton");
+    if (![self respondsToSelector:sel])
+        return;
+    id like = ((id (*)(id, SEL))objc_msgSend)(self, sel);
+    if ([like isKindOfClass:[UIView class]] && !((UIView *)like).hidden) {
+        ((UIView *)like).hidden = YES;
+        ((UIView *)like).userInteractionEnabled = NO;
+    }
+}
+%end
+%end
+
+static void JackInstallReelsHideLike(void) {
+    static BOOL done = NO;
+    Class ufi = SPKReelsVerticalUFIClass();
+    if (done || !ufi)
+        return; // retried on the next Reels appearance until the class is registered
+    done = YES;
+    %init(JackReelsHideLikeHooks, JackReelsUFI = ufi);
+}
+
 %group JackReelsImmersiveHooks
 
 %hook IGSundialFeedViewController
 
 - (void)viewDidAppear:(BOOL)animated {
     %orig;
+    JackInstallReelsHideLike();
     [JackImmersiveFor((UIViewController *)self) start];
 }
 
