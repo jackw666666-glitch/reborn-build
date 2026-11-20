@@ -913,7 +913,8 @@ static void JackZeroAlpha(UIView *v) {
         return;
     objc_setAssociatedObject(b, @selector(setSymbol:on:size:), name, OBJC_ASSOCIATION_COPY_NONATOMIC);
     UIImageSymbolConfiguration *cfg = [UIImageSymbolConfiguration configurationWithPointSize:pt weight:UIImageSymbolWeightSemibold];
-    UIImage *img = [[UIImage systemImageNamed:name withConfiguration:cfg] imageWithTintColor:UIColor.whiteColor renderingMode:UIImageRenderingModeAlwaysOriginal];
+    // Same Instagram gradient as the tab bar icons.
+    UIImage *img = JackGradientImage([UIImage systemImageNamed:name withConfiguration:cfg]);
     [b setImage:img forState:UIControlStateNormal];
 }
 
@@ -1119,12 +1120,11 @@ static BOOL JackReelsMuted(void) {
 
 - (void)revealTap {
     self.lastActivity = CACurrentMediaTime();
-    // Full screen: any tap brings the controls back straight away.
-    // Controls on: the middle of the reel pauses / plays; anywhere else hides them.
+    // The middle of the reel always pauses / plays; anywhere else shows or hides the controls.
     UIView *root = self.controller.view;
     CGPoint p = [self.tap locationInView:root];
     CGSize sz = root.bounds.size;
-    if (!self.faded && p.x > sz.width * 0.3 && p.x < sz.width * 0.7 && p.y > sz.height * 0.35 && p.y < sz.height * 0.65) {
+    if (p.x > sz.width * 0.3 && p.x < sz.width * 0.7 && p.y > sz.height * 0.35 && p.y < sz.height * 0.65) {
         UICollectionViewCell *cell = [self currentCell];
         if (cell)
             JackReelsTargetForCell(cell).togglePlayback();
