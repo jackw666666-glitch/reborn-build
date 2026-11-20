@@ -53,6 +53,7 @@ id SPKJackLockedPreference(NSString *key) {
 
             // Reels can't be liked (tap or double-tap); unliking an old like still works
             @"reels_confirm_like" : @YES, @"reels_confirm_double_tap_like" : @YES, @"jack_block_reel_likes" : @YES,
+            @"reels_tap_control" : @"pause", // Instagram's own tap pauses (the middle of the reel)
             @"reels_hide_like_count" : @YES, // like button itself is hidden in JackReborn.xm
             @"reels_disable_auto_unmute" : @YES, // reels start muted; the speaker button unmutes
             @"reels_hide_header" : @YES, // no Reels / Friends bar, plus or sliders button on top of reels

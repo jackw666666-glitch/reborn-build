@@ -1100,8 +1100,14 @@ static BOOL JackReelsMuted(void) {
 }
 
 // Tap toggles the controls on/off (Instagram's own taps wait for it and lose); hold still pauses.
+// The middle of the reel is left to Instagram's own tap, which pauses / plays
+// (reels_tap_control = pause); anywhere else shows or hides the controls.
 - (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)g {
-    return YES;
+    UIView *root = self.controller.view;
+    CGPoint p = [g locationInView:root];
+    CGSize sz = root.bounds.size;
+    BOOL middle = p.x > sz.width * 0.3 && p.x < sz.width * 0.7 && p.y > sz.height * 0.35 && p.y < sz.height * 0.65;
+    return !middle;
 }
 
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)g shouldBeRequiredToFailByGestureRecognizer:(UIGestureRecognizer *)other {
@@ -1110,19 +1116,6 @@ static BOOL JackReelsMuted(void) {
 
 - (void)revealTap {
     self.lastActivity = CACurrentMediaTime();
-    // The middle of the reel always pauses / plays; anywhere else shows or hides the controls.
-    UIView *root = self.controller.view;
-    CGPoint p = [self.tap locationInView:root];
-    CGSize sz = root.bounds.size;
-    if (p.x > sz.width * 0.3 && p.x < sz.width * 0.7 && p.y > sz.height * 0.35 && p.y < sz.height * 0.65) {
-        UICollectionViewCell *cell = [self currentCell];
-        if (cell)
-            JackReelsTargetForCell(cell).togglePlayback();
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            [self refreshBar];
-        });
-        return;
-    }
     if (self.faded)
         [self showAnimated:YES];
     else
