@@ -829,9 +829,6 @@ static void JackZeroAlpha(UIView *v) {
 @property (nonatomic, strong) NSHashTable<UIView *> *fadedViews;
 @property (nonatomic, strong) UITapGestureRecognizer *tap;
 @property (nonatomic, strong) UIView *bar;
-@property (nonatomic, strong) UIButton *playButton;
-@property (nonatomic, strong) UIButton *skipButton;
-@property (nonatomic, strong) UIButton *rewindButton;
 @property (nonatomic, strong) UIButton *endButton; // one toggle: repeat the reel, or go to the next one
 @property (nonatomic, weak) UIView *ufiCell;
 @property (nonatomic, weak) UIView *ufiView;
@@ -872,21 +869,16 @@ static void JackZeroAlpha(UIView *v) {
     if (self.bar)
         return self.bar;
     CGFloat step = 52;
-    UIView *bar = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 48, step * 5)];
+    UIView *bar = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 48, step * 2)];
     bar.tag = kJackReelsBarTag;
     bar.alpha = 0.0;
-    self.playButton = [self iconButton:@selector(playTapped)];
-    self.rewindButton = [self iconButton:@selector(rewindTapped)];
-    self.skipButton = [self iconButton:@selector(skipTapped)];
     self.endButton = [self iconButton:@selector(endTapped)];
     self.muteButton = [self iconButton:@selector(muteTapped)];
-    NSArray<UIButton *> *order = @[ self.playButton, self.rewindButton, self.skipButton, self.endButton, self.muteButton ];
+    NSArray<UIButton *> *order = @[ self.endButton, self.muteButton ];
     for (NSUInteger i = 0; i < order.count; i++) {
         order[i].center = CGPointMake(24, step * i + step / 2);
         [bar addSubview:order[i]];
     }
-    [self setSymbol:@"gobackward.10" on:self.rewindButton size:24];
-    [self setSymbol:@"goforward.10" on:self.skipButton size:24];
     self.bar = bar;
     return bar;
 }
@@ -977,22 +969,10 @@ static BOOL JackReelsMuted(void) {
             bottom = MIN(bottom, CGRectGetMinY([extra convertRect:extra.bounds toView:root]) - 8);
     }
     self.bar.center = CGPointMake(cx, bottom - self.bar.bounds.size.height / 2);
-    BOOL playing = cell ? JackReelsTargetForCell(cell).isPlaying() : NO;
-    [self setSymbol:(playing ? @"pause.fill" : @"play.fill") on:self.playButton size:26];
     [self setSymbol:(JackReelsMuted() ? @"speaker.slash.fill" : @"speaker.wave.2.fill") on:self.muteButton size:22];
     // Repeat icon = the reel loops; next icon = it moves on by itself when it ends.
     [self setSymbol:(JackReelsAutoScrollOn() ? @"forward.end.fill" : @"repeat") on:self.endButton size:22];
     self.endButton.hidden = JackReelsAutoScrollController() == nil;
-}
-
-- (void)playTapped {
-    UICollectionViewCell *cell = [self currentCell];
-    if (!cell)
-        return;
-    JackReelsTargetForCell(cell).togglePlayback();
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        [self refreshBar];
-    });
 }
 
 - (void)endTapped {
@@ -1005,14 +985,6 @@ static BOOL JackReelsMuted(void) {
     else if ([c respondsToSelector:@selector(setIsEnabled:)])
         ((void (*)(id, SEL, BOOL))objc_msgSend)(c, @selector(setIsEnabled:), on);
     [self refreshBar];
-}
-
-- (void)rewindTapped {
-    [self jumpBy:-10.0];
-}
-
-- (void)skipTapped {
-    [self jumpBy:10.0];
 }
 
 - (void)jumpBy:(double)delta {
@@ -1045,7 +1017,13 @@ static BOOL JackReelsMuted(void) {
 }
 
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)g shouldReceiveTouch:(UITouch *)touch {
-    return !(self.bar && [touch.view isDescendantOfView:self.bar]);
+    if (self.bar && [touch.view isDescendantOfView:self.bar])
+        return NO;
+    // Instagram's own buttons (comment, share, follow...) keep their taps.
+    for (UIView *v = touch.view; v; v = v.superview)
+        if ([v isKindOfClass:[UIControl class]])
+            return NO;
+    return YES;
 }
 
 - (void)start {
@@ -1110,12 +1088,30 @@ static BOOL JackReelsMuted(void) {
     return !middle;
 }
 
+// Middle band of the reel: left third = back 10 s, centre = Instagram's pause, right third = forward 10 s.
+// Everywhere else (top and bottom) shows or hides the controls.
+- (NSInteger)zoneForPoint:(CGPoint)p {
+    CGSize sz = self.controller.view.bounds.size;
+    if (p.y < sz.height * 0.35 || p.y > sz.height * 0.65)
+        return 0;
+    if (p.x <= sz.width * 0.3)
+        return -1;
+    if (p.x >= sz.width * 0.7)
+        return 1;
+    return 0;
+}
+
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)g shouldBeRequiredToFailByGestureRecognizer:(UIGestureRecognizer *)other {
     return g == self.tap && [other isKindOfClass:[UITapGestureRecognizer class]];
 }
 
 - (void)revealTap {
     self.lastActivity = CACurrentMediaTime();
+    NSInteger zone = [self zoneForPoint:[self.tap locationInView:self.controller.view]];
+    if (zone != 0) {
+        [self jumpBy:10.0 * zone];
+        return;
+    }
     if (self.faded)
         [self showAnimated:YES];
     else
